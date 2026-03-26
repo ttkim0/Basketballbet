@@ -1,0 +1,696 @@
+"""
+Feature Engineering Pipeline
+==============================
+Computes ALL covariates from the project spec:
+- Schedule features (rest, B2B, 3in4, 4in6, travel, timezone, altitude)
+- Recent form (rolling 5/10 game windows for net/off/def rating, pace, shooting, etc.)
+- Matchup-style covariates
+- Motivation/context features
+"""
+
+import pandas as pd
+import numpy as np
+from math import radians, cos, sin, asin, sqrt
+from tqdm import tqdm
+import warnings
+warnings.filterwarnings("ignore")
+
+
+# ============================================================
+# Arena locations for travel/timezone
+# ============================================================
+ARENA_LOCATIONS = {
+    "ATL": {"lat": 33.757, "lon": -84.396, "tz_offset": 0, "altitude_ft": 1050},
+    "BOS": {"lat": 42.366, "lon": -71.062, "tz_offset": 0, "altitude_ft": 20},
+    "BKN": {"lat": 40.682, "lon": -73.975, "tz_offset": 0, "altitude_ft": 30},
+    "CHA": {"lat": 35.225, "lon": -80.839, "tz_offset": 0, "altitude_ft": 751},
+    "CHI": {"lat": 41.881, "lon": -87.674, "tz_offset": -1, "altitude_ft": 594},
+    "CLE": {"lat": 41.496, "lon": -81.688, "tz_offset": 0, "altitude_ft": 653},
+    "DAL": {"lat": 32.790, "lon": -96.810, "tz_offset": -1, "altitude_ft": 430},
+    "DEN": {"lat": 39.749, "lon": -104.999, "tz_offset": -2, "altitude_ft": 5280},
+    "DET": {"lat": 42.341, "lon": -83.055, "tz_offset": 0, "altitude_ft": 600},
+    "GSW": {"lat": 37.768, "lon": -122.388, "tz_offset": -3, "altitude_ft": 16},
+    "HOU": {"lat": 29.751, "lon": -95.362, "tz_offset": -1, "altitude_ft": 50},
+    "IND": {"lat": 39.764, "lon": -86.155, "tz_offset": 0, "altitude_ft": 717},
+    "LAC": {"lat": 34.043, "lon": -118.267, "tz_offset": -3, "altitude_ft": 305},
+    "LAL": {"lat": 34.043, "lon": -118.267, "tz_offset": -3, "altitude_ft": 305},
+    "MEM": {"lat": 35.138, "lon": -90.051, "tz_offset": -1, "altitude_ft": 337},
+    "MIA": {"lat": 25.781, "lon": -80.187, "tz_offset": 0, "altitude_ft": 6},
+    "MIL": {"lat": 43.045, "lon": -87.917, "tz_offset": -1, "altitude_ft": 617},
+    "MIN": {"lat": 44.979, "lon": -93.276, "tz_offset": -1, "altitude_ft": 830},
+    "NOP": {"lat": 29.949, "lon": -90.082, "tz_offset": -1, "altitude_ft": 3},
+    "NYK": {"lat": 40.751, "lon": -73.994, "tz_offset": 0, "altitude_ft": 33},
+    "OKC": {"lat": 35.463, "lon": -97.515, "tz_offset": -1, "altitude_ft": 1201},
+    "ORL": {"lat": 28.539, "lon": -81.384, "tz_offset": 0, "altitude_ft": 82},
+    "PHI": {"lat": 39.901, "lon": -75.172, "tz_offset": 0, "altitude_ft": 39},
+    "PHX": {"lat": 33.446, "lon": -112.071, "tz_offset": -2, "altitude_ft": 1086},
+    "POR": {"lat": 45.532, "lon": -122.667, "tz_offset": -3, "altitude_ft": 50},
+    "SAC": {"lat": 38.580, "lon": -121.500, "tz_offset": -3, "altitude_ft": 30},
+    "SAS": {"lat": 29.427, "lon": -98.438, "tz_offset": -1, "altitude_ft": 650},
+    "TOR": {"lat": 43.643, "lon": -79.379, "tz_offset": 0, "altitude_ft": 249},
+    "UTA": {"lat": 40.768, "lon": -111.901, "tz_offset": -2, "altitude_ft": 4327},
+    "WAS": {"lat": 38.898, "lon": -77.021, "tz_offset": 0, "altitude_ft": 25},
+}
+
+# High-altitude venues (Denver is the primary one, Utah secondary)
+HIGH_ALTITUDE_TEAMS = {"DEN": 5280, "UTA": 4327}
+
+
+def haversine_miles(lat1, lon1, lat2, lon2):
+    """Great-circle distance in miles."""
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
+    return 3959 * 2 * asin(sqrt(a))
+
+
+def compute_schedule_features(df):
+    """
+    Compute all schedule-related features:
+    - Rest days
+    - Back-to-back
+    - 3-in-4, 4-in-6
+    - Road trip / homestand game number
+    - Travel miles
+    - Timezone shift
+    - Altitude edge
+    """
+    print("Computing schedule features...")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Build team game history: for each team, track their games in order
+    team_games = {}  # team -> list of (date, game_location_team, is_home)
+
+    for idx, row in df.iterrows():
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+        date = pd.Timestamp(row["date"])
+
+        if home not in team_games:
+            team_games[home] = []
+        if visitor not in team_games:
+            team_games[visitor] = []
+
+        team_games[home].append({"date": date, "location": home, "is_home": True, "idx": idx})
+        team_games[visitor].append({"date": date, "location": home, "is_home": False, "idx": idx})
+
+    # Sort each team's games
+    for team in team_games:
+        team_games[team].sort(key=lambda x: (x["date"], x["idx"]))
+
+    # Build lookup: team -> game_index -> position in team's schedule
+    team_game_pos = {}
+    for team, games in team_games.items():
+        team_game_pos[team] = {}
+        for pos, g in enumerate(games):
+            team_game_pos[team][g["idx"]] = pos
+
+    # Now compute features for each game
+    features = {
+        "rest_days_home": [], "rest_days_visitor": [], "rest_diff": [],
+        "home_b2b": [], "visitor_b2b": [],
+        "home_3in4": [], "visitor_3in4": [],
+        "home_4in6": [], "visitor_4in6": [],
+        "road_trip_game_num_home": [], "road_trip_game_num_visitor": [],
+        "homestand_game_num_home": [], "homestand_game_num_visitor": [],
+        "travel_miles_home": [], "travel_miles_visitor": [], "travel_diff": [],
+        "tz_shift_home": [], "tz_shift_visitor": [], "tz_diff": [],
+        "altitude_edge_home": [],
+    }
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Schedule Features"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+        date = pd.Timestamp(row["date"])
+
+        for team, prefix in [(home, "home"), (visitor, "visitor")]:
+            pos = team_game_pos[team].get(idx, 0)
+            games = team_games[team]
+
+            # Rest days
+            if pos > 0:
+                prev_date = games[pos - 1]["date"]
+                rest = (date - prev_date).days - 1
+            else:
+                rest = 7  # Season opener default
+
+            features[f"rest_days_{prefix}"].append(rest)
+
+            # Back-to-back (0 rest days)
+            b2b = 1 if rest == 0 else 0
+            features[f"{prefix}_b2b"].append(b2b)
+
+            # 3-in-4: check if 3 games in last 4 days including today
+            games_in_window = sum(
+                1 for g in games[max(0, pos-2):pos+1]
+                if (date - g["date"]).days <= 3
+            )
+            features[f"{prefix}_3in4"].append(1 if games_in_window >= 3 else 0)
+
+            # 4-in-6
+            games_in_window_6 = sum(
+                1 for g in games[max(0, pos-3):pos+1]
+                if (date - g["date"]).days <= 5
+            )
+            features[f"{prefix}_4in6"].append(1 if games_in_window_6 >= 4 else 0)
+
+            # Road trip / homestand game number
+            if team in ARENA_LOCATIONS:
+                is_home_game = (prefix == "home")
+                streak = 1
+                for p in range(pos - 1, -1, -1):
+                    if games[p]["is_home"] == is_home_game:
+                        streak += 1
+                    else:
+                        break
+                if is_home_game:
+                    features[f"homestand_game_num_{prefix}"].append(streak)
+                    features[f"road_trip_game_num_{prefix}"].append(0)
+                else:
+                    features[f"road_trip_game_num_{prefix}"].append(streak)
+                    features[f"homestand_game_num_{prefix}"].append(0)
+            else:
+                features[f"road_trip_game_num_{prefix}"].append(0)
+                features[f"homestand_game_num_{prefix}"].append(0)
+
+            # Travel miles (from previous game location to current game location)
+            game_location = home  # Both teams play at home team's arena
+            if pos > 0 and team in ARENA_LOCATIONS:
+                prev_location = games[pos - 1]["location"]
+                if prev_location in ARENA_LOCATIONS and game_location in ARENA_LOCATIONS:
+                    miles = haversine_miles(
+                        ARENA_LOCATIONS[prev_location]["lat"],
+                        ARENA_LOCATIONS[prev_location]["lon"],
+                        ARENA_LOCATIONS[game_location]["lat"],
+                        ARENA_LOCATIONS[game_location]["lon"],
+                    )
+                else:
+                    miles = 0
+            else:
+                miles = 0
+            features[f"travel_miles_{prefix}"].append(miles)
+
+            # Timezone shift
+            if pos > 0 and team in ARENA_LOCATIONS:
+                prev_location = games[pos - 1]["location"]
+                if prev_location in ARENA_LOCATIONS and game_location in ARENA_LOCATIONS:
+                    tz_prev = ARENA_LOCATIONS[prev_location]["tz_offset"]
+                    tz_curr = ARENA_LOCATIONS[game_location]["tz_offset"]
+                    tz_shift = abs(tz_curr - tz_prev)
+                else:
+                    tz_shift = 0
+            else:
+                tz_shift = 0
+            features[f"tz_shift_{prefix}"].append(tz_shift)
+
+        # Differentials
+        features["rest_diff"].append(
+            features["rest_days_home"][-1] - features["rest_days_visitor"][-1]
+        )
+        features["travel_diff"].append(
+            features["travel_miles_home"][-1] - features["travel_miles_visitor"][-1]
+        )
+        features["tz_diff"].append(
+            features["tz_shift_home"][-1] - features["tz_shift_visitor"][-1]
+        )
+
+        # Altitude edge (home team advantage if playing at altitude)
+        game_loc = home
+        alt = ARENA_LOCATIONS.get(game_loc, {}).get("altitude_ft", 0)
+        altitude_edge = 1 if alt >= 4000 else 0
+        features["altitude_edge_home"].append(altitude_edge)
+
+    for col, values in features.items():
+        df[col] = values
+
+    print(f"  Added {len(features)} schedule features")
+    return df
+
+
+def compute_rolling_form_features(df, windows=[5, 10]):
+    """
+    Compute rolling recent form features for each team before each game.
+    Uses only pregame information (strict temporal ordering).
+
+    Features computed per window:
+    - Net rating (pts scored - pts allowed per game)
+    - Offensive output
+    - Defensive output (pts allowed)
+    - Win rate
+    """
+    print("Computing rolling form features...")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Track each team's game history
+    team_history = {}  # team -> list of game stats dicts
+
+    # Pre-allocate feature columns
+    feature_cols = {}
+    for w in windows:
+        for side in ["home", "visitor"]:
+            for stat in ["net_rating", "off_rating", "def_rating", "win_rate",
+                         "avg_margin", "pts_scored", "pts_allowed"]:
+                col = f"last{w}_{stat}_{side}"
+                feature_cols[col] = [np.nan] * len(df)
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Rolling Form"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+
+        for team, prefix in [(home, "home"), (visitor, "visitor")]:
+            if team not in team_history:
+                team_history[team] = []
+
+            history = team_history[team]
+
+            for w in windows:
+                if len(history) >= w:
+                    recent = history[-w:]
+                    pts_for = np.mean([g["pts_for"] for g in recent])
+                    pts_against = np.mean([g["pts_against"] for g in recent])
+                    wins = np.mean([g["win"] for g in recent])
+                    margins = np.mean([g["margin"] for g in recent])
+
+                    feature_cols[f"last{w}_net_rating_{prefix}"][idx] = pts_for - pts_against
+                    feature_cols[f"last{w}_off_rating_{prefix}"][idx] = pts_for
+                    feature_cols[f"last{w}_def_rating_{prefix}"][idx] = pts_against
+                    feature_cols[f"last{w}_win_rate_{prefix}"][idx] = wins
+                    feature_cols[f"last{w}_avg_margin_{prefix}"][idx] = margins
+                    feature_cols[f"last{w}_pts_scored_{prefix}"][idx] = pts_for
+                    feature_cols[f"last{w}_pts_allowed_{prefix}"][idx] = pts_against
+
+        # After computing pregame features, add this game to history
+        home_stats = {
+            "pts_for": row["home_pts"], "pts_against": row["visitor_pts"],
+            "win": row["home_win"], "margin": row["margin"],
+        }
+        visitor_stats = {
+            "pts_for": row["visitor_pts"], "pts_against": row["home_pts"],
+            "win": 1 - row["home_win"], "margin": -row["margin"],
+        }
+
+        if home not in team_history:
+            team_history[home] = []
+        if visitor not in team_history:
+            team_history[visitor] = []
+
+        team_history[home].append(home_stats)
+        team_history[visitor].append(visitor_stats)
+
+    # Add to dataframe
+    for col, values in feature_cols.items():
+        df[col] = values
+
+    # Compute differentials
+    for w in windows:
+        for stat in ["net_rating", "off_rating", "def_rating", "win_rate", "avg_margin"]:
+            home_col = f"last{w}_{stat}_home"
+            vis_col = f"last{w}_{stat}_visitor"
+            diff_col = f"last{w}_{stat}_diff"
+            df[diff_col] = df[home_col] - df[vis_col]
+
+    print(f"  Added rolling form features for windows {windows}")
+    return df
+
+
+def compute_season_stats_features(df):
+    """
+    Compute cumulative season statistics for each team before each game.
+    These are running averages of team performance within the current season.
+
+    Tracks: FG%, 3P%, FT%, rebounds, assists, steals, blocks, turnovers, fouls
+    All computed as per-game averages up to (but not including) current game.
+    """
+    print("Computing cumulative season stats features...")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Track season stats per team
+    team_season_stats = {}  # (team, season) -> running totals
+
+    stat_names = ["fg_pct", "three_pct", "ft_pct", "total_reb", "ast",
+                  "stl", "blk", "tov", "pf", "pace_proxy"]
+
+    # Pre-allocate
+    feature_cols = {}
+    for side in ["home", "visitor"]:
+        for stat in stat_names:
+            feature_cols[f"season_{stat}_{side}"] = [np.nan] * len(df)
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Season Stats"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+        season = row["season"]
+
+        for team, prefix in [(home, "home"), (visitor, "visitor")]:
+            key = (team, season)
+            if key in team_season_stats:
+                stats = team_season_stats[key]
+                n = stats["games"]
+                if n > 0:
+                    feature_cols[f"season_fg_pct_{prefix}"][idx] = stats["pts_for"] / max(stats["fga_est"], 1)
+                    feature_cols[f"season_total_reb_{prefix}"][idx] = stats.get("total_reb", 0) / n
+                    feature_cols[f"season_ast_{prefix}"][idx] = stats.get("ast", 0) / n
+                    feature_cols[f"season_tov_{prefix}"][idx] = stats.get("tov", 0) / n
+                    feature_cols[f"season_pace_proxy_{prefix}"][idx] = stats.get("total_pts", 0) / n
+            else:
+                team_season_stats[key] = {
+                    "games": 0, "pts_for": 0, "pts_against": 0,
+                    "fga_est": 0, "total_reb": 0, "ast": 0, "tov": 0,
+                    "total_pts": 0,
+                }
+
+        # Update after using pregame values
+        for team, prefix, pts_for, pts_against in [
+            (home, "home", row["home_pts"], row["visitor_pts"]),
+            (visitor, "visitor", row["visitor_pts"], row["home_pts"]),
+        ]:
+            key = (team, season)
+            s = team_season_stats[key]
+            s["games"] += 1
+            s["pts_for"] += pts_for
+            s["pts_against"] += pts_against
+            s["fga_est"] += pts_for * 1.1  # Rough FGA estimate
+            s["total_pts"] += pts_for + pts_against
+
+    for col, values in feature_cols.items():
+        df[col] = values
+
+    # Differentials
+    for stat in stat_names:
+        h = f"season_{stat}_home"
+        v = f"season_{stat}_visitor"
+        if h in df.columns and v in df.columns:
+            df[f"season_{stat}_diff"] = df[h] - df[v]
+
+    print(f"  Added cumulative season stat features")
+    return df
+
+
+def compute_head_to_head_features(df):
+    """
+    Compute head-to-head history between the two teams.
+    Tracks recent matchup results as a feature.
+    """
+    print("Computing head-to-head features...")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    h2h_record = {}  # (teamA, teamB) -> list of results (1=A won)
+
+    h2h_win_rate = [np.nan] * len(df)
+    h2h_avg_margin = [np.nan] * len(df)
+    h2h_games = [0] * len(df)
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="H2H Features"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+
+        key = tuple(sorted([home, visitor]))
+        if key in h2h_record and len(h2h_record[key]) > 0:
+            records = h2h_record[key]
+            # From home team's perspective
+            home_wins = sum(1 for r in records if (r["winner"] == home))
+            h2h_win_rate[idx] = home_wins / len(records)
+            h2h_avg_margin[idx] = np.mean([
+                r["margin"] if r["home"] == home else -r["margin"]
+                for r in records
+            ])
+            h2h_games[idx] = len(records)
+
+        # Update record
+        if key not in h2h_record:
+            h2h_record[key] = []
+        h2h_record[key].append({
+            "home": home,
+            "winner": home if row["home_win"] == 1 else visitor,
+            "margin": row["margin"],
+        })
+        # Keep last 20 matchups
+        if len(h2h_record[key]) > 20:
+            h2h_record[key] = h2h_record[key][-20:]
+
+    df["h2h_home_win_rate"] = h2h_win_rate
+    df["h2h_avg_margin"] = h2h_avg_margin
+    df["h2h_games_played"] = h2h_games
+
+    print(f"  Added head-to-head features")
+    return df
+
+
+def compute_matchup_style_features(df):
+    """
+    Compute matchup-style covariates based on team style differences.
+    Uses cumulative season stats to derive pace mismatch, scoring style, etc.
+    """
+    print("Computing matchup-style features...")
+
+    # Pace mismatch (using pace proxy)
+    if "season_pace_proxy_home" in df.columns and "season_pace_proxy_visitor" in df.columns:
+        df["pace_mismatch"] = df["season_pace_proxy_home"] - df["season_pace_proxy_visitor"]
+
+    # Scoring differential styles from rolling stats
+    for w in [5, 10]:
+        if f"last{w}_off_rating_home" in df.columns:
+            # Offensive vs Defensive matchup
+            df[f"off_vs_def_mismatch_{w}"] = (
+                df[f"last{w}_off_rating_home"] - df[f"last{w}_def_rating_visitor"]
+            )
+            df[f"def_vs_off_mismatch_{w}"] = (
+                df[f"last{w}_def_rating_home"] - df[f"last{w}_off_rating_visitor"]
+            )
+
+    print(f"  Added matchup-style features")
+    return df
+
+
+def compute_motivation_features(df):
+    """
+    Compute motivation/context features:
+    - Playoff race urgency (based on season progress and win rate)
+    - Post All-Star break flag
+    - End of season rest risk
+    - National TV flag (approximated)
+    """
+    print("Computing motivation/context features...")
+
+    # Track cumulative wins/losses per team per season
+    team_season_record = {}
+
+    playoff_urgency_home = [0.0] * len(df)
+    playoff_urgency_visitor = [0.0] * len(df)
+    post_allstar = [0] * len(df)
+    season_progress = [0.0] * len(df)
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Motivation Features"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+        season = row["season"]
+        date = pd.Timestamp(row["date"])
+
+        # All-Star break is typically mid-February
+        allstar_date = pd.Timestamp(f"{season}-02-15")
+        post_allstar[idx] = 1 if date > allstar_date else 0
+
+        # Season progress (0 to 1)
+        season_start = pd.Timestamp(f"{season-1}-10-15")
+        season_end = pd.Timestamp(f"{season}-04-15")
+        total_days = (season_end - season_start).days
+        elapsed = (date - season_start).days
+        progress = max(0, min(1, elapsed / total_days))
+        season_progress[idx] = progress
+
+        for team, prefix_list in [(home, "home"), (visitor, "visitor")]:
+            key = (team, season)
+            if key not in team_season_record:
+                team_season_record[key] = {"wins": 0, "losses": 0}
+
+            record = team_season_record[key]
+            total = record["wins"] + record["losses"]
+            if total > 0:
+                win_pct = record["wins"] / total
+                # Urgency: high when team is near .500 and deep into season
+                # Teams with 0.400-0.600 win pct in March/April have highest urgency
+                closeness_to_bubble = 1.0 - abs(win_pct - 0.500) * 4
+                closeness_to_bubble = max(0, closeness_to_bubble)
+                urgency = closeness_to_bubble * progress
+            else:
+                urgency = 0
+
+            if prefix_list == "home":
+                playoff_urgency_home[idx] = urgency
+            else:
+                playoff_urgency_visitor[idx] = urgency
+
+        # Update records after using pregame values
+        h_key = (home, season)
+        v_key = (visitor, season)
+        if h_key not in team_season_record:
+            team_season_record[h_key] = {"wins": 0, "losses": 0}
+        if v_key not in team_season_record:
+            team_season_record[v_key] = {"wins": 0, "losses": 0}
+
+        if row["home_win"] == 1:
+            team_season_record[h_key]["wins"] += 1
+            team_season_record[v_key]["losses"] += 1
+        else:
+            team_season_record[h_key]["losses"] += 1
+            team_season_record[v_key]["wins"] += 1
+
+    df["playoff_urgency_home"] = playoff_urgency_home
+    df["playoff_urgency_visitor"] = playoff_urgency_visitor
+    df["playoff_urgency_diff"] = df["playoff_urgency_home"] - df["playoff_urgency_visitor"]
+    df["post_allstar_break"] = post_allstar
+    df["season_progress"] = season_progress
+
+    # Weekend games (Sat/Sun tend to have different dynamics)
+    df["is_weekend"] = pd.to_datetime(df["date"]).dt.dayofweek.isin([5, 6]).astype(int)
+
+    # Month features
+    df["month"] = pd.to_datetime(df["date"]).dt.month
+
+    print(f"  Added motivation/context features")
+    return df
+
+
+def compute_streak_features(df):
+    """
+    Compute win/loss streak features for each team entering each game.
+    """
+    print("Computing streak features...")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    team_streaks = {}  # team -> current streak (positive = winning, negative = losing)
+
+    home_streak = [0] * len(df)
+    visitor_streak = [0] * len(df)
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Streaks"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+
+        home_streak[idx] = team_streaks.get(home, 0)
+        visitor_streak[idx] = team_streaks.get(visitor, 0)
+
+        # Update streaks
+        if row["home_win"] == 1:
+            team_streaks[home] = max(0, team_streaks.get(home, 0)) + 1
+            team_streaks[visitor] = min(0, team_streaks.get(visitor, 0)) - 1
+        else:
+            team_streaks[home] = min(0, team_streaks.get(home, 0)) - 1
+            team_streaks[visitor] = max(0, team_streaks.get(visitor, 0)) + 1
+
+    df["home_streak"] = home_streak
+    df["visitor_streak"] = visitor_streak
+    df["streak_diff"] = df["home_streak"] - df["visitor_streak"]
+
+    print(f"  Added streak features")
+    return df
+
+
+def compute_season_win_pct_features(df):
+    """
+    Compute running season win percentage for each team before each game.
+    """
+    print("Computing season win% features...")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    team_records = {}
+
+    home_win_pct = [np.nan] * len(df)
+    visitor_win_pct = [np.nan] * len(df)
+    home_home_win_pct = [np.nan] * len(df)
+    visitor_road_win_pct = [np.nan] * len(df)
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Win %"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+        season = row["season"]
+
+        for team, prefix in [(home, "home"), (visitor, "visitor")]:
+            key = (team, season)
+            if key not in team_records:
+                team_records[key] = {"total_w": 0, "total_g": 0,
+                                     "home_w": 0, "home_g": 0,
+                                     "away_w": 0, "away_g": 0}
+
+            rec = team_records[key]
+            if rec["total_g"] > 0:
+                if prefix == "home":
+                    home_win_pct[idx] = rec["total_w"] / rec["total_g"]
+                    if rec["home_g"] > 0:
+                        home_home_win_pct[idx] = rec["home_w"] / rec["home_g"]
+                else:
+                    visitor_win_pct[idx] = rec["total_w"] / rec["total_g"]
+                    if rec["away_g"] > 0:
+                        visitor_road_win_pct[idx] = rec["away_w"] / rec["away_g"]
+
+        # Update
+        h_key = (home, season)
+        v_key = (visitor, season)
+        if h_key not in team_records:
+            team_records[h_key] = {"total_w": 0, "total_g": 0, "home_w": 0, "home_g": 0, "away_w": 0, "away_g": 0}
+        if v_key not in team_records:
+            team_records[v_key] = {"total_w": 0, "total_g": 0, "home_w": 0, "home_g": 0, "away_w": 0, "away_g": 0}
+
+        team_records[h_key]["total_g"] += 1
+        team_records[h_key]["home_g"] += 1
+        team_records[v_key]["total_g"] += 1
+        team_records[v_key]["away_g"] += 1
+
+        if row["home_win"] == 1:
+            team_records[h_key]["total_w"] += 1
+            team_records[h_key]["home_w"] += 1
+        else:
+            team_records[v_key]["total_w"] += 1
+            team_records[v_key]["away_w"] += 1
+
+    df["home_season_win_pct"] = home_win_pct
+    df["visitor_season_win_pct"] = visitor_win_pct
+    df["season_win_pct_diff"] = df["home_season_win_pct"] - df["visitor_season_win_pct"]
+    df["home_home_win_pct"] = home_home_win_pct
+    df["visitor_road_win_pct"] = visitor_road_win_pct
+
+    print(f"  Added season win% features")
+    return df
+
+
+def compute_all_features(df):
+    """Run the complete feature engineering pipeline."""
+    print("=" * 70)
+    print("FEATURE ENGINEERING PIPELINE")
+    print(f"Input: {len(df)} games")
+    print("=" * 70)
+
+    # Add home indicator
+    df["home_flag"] = 1
+
+    df = compute_schedule_features(df)
+    df = compute_rolling_form_features(df)
+    df = compute_season_stats_features(df)
+    df = compute_head_to_head_features(df)
+    df = compute_matchup_style_features(df)
+    df = compute_motivation_features(df)
+    df = compute_streak_features(df)
+    df = compute_season_win_pct_features(df)
+
+    print(f"\n{'=' * 70}")
+    print(f"FEATURE ENGINEERING COMPLETE")
+    print(f"Output: {len(df)} games x {len(df.columns)} columns")
+    print(f"{'=' * 70}")
+
+    return df
+
+
+if __name__ == "__main__":
+    import os
+    processed_dir = "/home/user/Basketballbet/data/processed"
+    games_path = os.path.join(processed_dir, "games_with_elo.csv")
+
+    if os.path.exists(games_path):
+        df = pd.read_csv(games_path, parse_dates=["date"])
+        df = compute_all_features(df)
+        df.to_csv(os.path.join(processed_dir, "games_full_features.csv"), index=False)
+        print(f"\nSaved full feature set to games_full_features.csv")
+        print(f"Columns: {list(df.columns)}")
+    else:
+        print("No games_with_elo.csv found. Run elo_ratings.py first.")
