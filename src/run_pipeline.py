@@ -29,8 +29,8 @@ def run_full_pipeline():
     total_start = time.time()
 
     print("\n" + "=" * 80)
-    print("  NBA WIN PREDICTION MODEL - FULL TRAINING PIPELINE")
-    print("  Building from 2003-04 through 2025-26 (March 25, 2026)")
+    print("  NBA WIN PREDICTION MODEL - FULL TRAINING PIPELINE (OPTIMIZED)")
+    print("  Building from 2003-04 through 2024-25 | 28K+ real games")
     print("=" * 80)
 
     # ============================================================

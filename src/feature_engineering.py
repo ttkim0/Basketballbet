@@ -654,6 +654,118 @@ def compute_season_win_pct_features(df):
     return df
 
 
+def compute_advanced_features(df):
+    """
+    Compute advanced derived features that combine base features for higher signal.
+    These are interaction terms, non-linear transforms, and composite ratings
+    that have strong theoretical backing for NBA game prediction.
+    """
+    print("Computing advanced derived features...")
+
+    # --- 1. Non-linear Elo transforms ---
+    # Squared Elo diff captures that a 300-pt Elo gap is more than 3x a 100-pt gap
+    if "elo_rating_diff" in df.columns:
+        df["elo_diff_squared"] = df["elo_rating_diff"] ** 2 * np.sign(df["elo_rating_diff"])
+        # Absolute Elo diff (game competitiveness - closer games are harder to predict)
+        df["elo_diff_abs"] = df["elo_rating_diff"].abs()
+
+    # --- 2. Pythagorean win expectation (Bill James style, adapted for NBA) ---
+    # Uses season points scored/allowed to estimate true team strength
+    # NBA exponent is typically ~13.91 (Morey), we use ~14
+    PYTH_EXP = 14
+    for side in ["home", "visitor"]:
+        scored_col = f"last10_pts_scored_{side}"
+        allowed_col = f"last10_pts_allowed_{side}"
+        if scored_col in df.columns and allowed_col in df.columns:
+            scored = df[scored_col].fillna(105)
+            allowed = df[allowed_col].fillna(105)
+            # Avoid division by zero
+            denom = scored ** PYTH_EXP + allowed ** PYTH_EXP
+            df[f"pyth_win_exp_{side}"] = np.where(denom > 0, scored ** PYTH_EXP / denom, 0.5)
+
+    if "pyth_win_exp_home" in df.columns and "pyth_win_exp_visitor" in df.columns:
+        df["pyth_win_exp_diff"] = df["pyth_win_exp_home"] - df["pyth_win_exp_visitor"]
+
+    # --- 3. Rest × quality interactions ---
+    # B2B is worse for good teams (more to lose) and compounds with travel
+    if "home_b2b" in df.columns and "elo_rating_diff" in df.columns:
+        df["home_b2b_x_elo"] = df["home_b2b"] * df["elo_rating_diff"]
+        df["visitor_b2b_x_elo"] = df["visitor_b2b"] * (-df["elo_rating_diff"])
+    if "rest_diff" in df.columns and "elo_rating_diff" in df.columns:
+        df["rest_x_elo"] = df["rest_diff"] * df["elo_rating_diff"]
+
+    # --- 4. Travel fatigue composite ---
+    # Combine travel miles + timezone shift + B2B into single fatigue score
+    for side in ["home", "visitor"]:
+        travel = df.get(f"travel_miles_{side}", pd.Series(0, index=df.index)).fillna(0)
+        tz = df.get(f"tz_shift_{side}", pd.Series(0, index=df.index)).fillna(0)
+        b2b = df.get(f"{side}_b2b", pd.Series(0, index=df.index)).fillna(0)
+        three_in_4 = df.get(f"{side}_3in4", pd.Series(0, index=df.index)).fillna(0)
+        # Normalize travel to 0-1 range (max ~2800 miles cross-country)
+        travel_norm = travel / 2800.0
+        df[f"fatigue_composite_{side}"] = travel_norm + tz * 0.3 + b2b * 0.5 + three_in_4 * 0.3
+
+    df["fatigue_diff"] = df["fatigue_composite_home"] - df["fatigue_composite_visitor"]
+
+    # --- 5. Form momentum (weighted recent form - last 3 games weighted 2x vs games 4-10) ---
+    for w_short, w_long in [(5, 10)]:
+        for stat in ["net_rating", "win_rate", "avg_margin"]:
+            short_col = f"last{w_short}_{stat}_diff"
+            long_col = f"last{w_long}_{stat}_diff"
+            if short_col in df.columns and long_col in df.columns:
+                # Weighted: 60% recent, 40% longer window
+                df[f"weighted_{stat}_momentum"] = (
+                    0.6 * df[short_col].fillna(0) + 0.4 * df[long_col].fillna(0)
+                )
+
+    # --- 6. Streak × season context interaction ---
+    if "streak_diff" in df.columns and "season_progress" in df.columns:
+        df["streak_x_progress"] = df["streak_diff"] * df["season_progress"]
+
+    # --- 7. Win pct composite (combines overall, home/road, and Elo into single power rating) ---
+    if all(c in df.columns for c in ["season_win_pct_diff", "elo_rating_diff"]):
+        elo_norm = df["elo_rating_diff"] / 400.0  # Normalize to ~[-1, 1]
+        wpct = df["season_win_pct_diff"].fillna(0)
+        df["power_rating_composite"] = 0.6 * elo_norm + 0.4 * wpct
+
+    # --- 8. Defensive matchup quality ---
+    for w in [5, 10]:
+        off_home = f"last{w}_off_rating_home"
+        def_vis = f"last{w}_def_rating_visitor"
+        off_vis = f"last{w}_off_rating_visitor"
+        def_home = f"last{w}_def_rating_home"
+        if all(c in df.columns for c in [off_home, def_vis, off_vis, def_home]):
+            # Net matchup advantage: how much better is home offense vs visitor defense
+            # minus how much better is visitor offense vs home defense
+            df[f"net_matchup_edge_{w}"] = (
+                (df[off_home] - df[def_vis]) - (df[off_vis] - df[def_home])
+            )
+
+    # --- 9. H2H recency-weighted (more weight to recent matchups) ---
+    # Already have h2h features, add interaction with current form
+    if "h2h_home_win_rate" in df.columns and "season_win_pct_diff" in df.columns:
+        df["h2h_x_current_form"] = (
+            df["h2h_home_win_rate"].fillna(0.5) * df["season_win_pct_diff"].fillna(0)
+        )
+
+    # --- 10. Consistency features (variance in recent performance) ---
+    # Already tracked in rolling form - use margin variance as proxy
+    # High variance teams are less predictable
+    # This is implicitly captured but let's add explicit feature
+    if "last10_avg_margin_diff" in df.columns and "last5_avg_margin_diff" in df.columns:
+        # Form volatility: difference between short and long window
+        df["form_volatility"] = (
+            df["last5_avg_margin_diff"].fillna(0) - df["last10_avg_margin_diff"].fillna(0)
+        ).abs()
+
+    n_new = sum(1 for c in df.columns if c.startswith(("elo_diff_sq", "elo_diff_abs",
+                "pyth_", "home_b2b_x", "visitor_b2b_x", "rest_x", "fatigue_",
+                "weighted_", "streak_x", "power_rating", "net_matchup",
+                "h2h_x_", "form_vol")))
+    print(f"  Added {n_new} advanced derived features")
+    return df
+
+
 def compute_all_features(df):
     """Run the complete feature engineering pipeline."""
     print("=" * 70)
@@ -665,13 +777,14 @@ def compute_all_features(df):
     df["home_flag"] = 1
 
     df = compute_schedule_features(df)
-    df = compute_rolling_form_features(df)
+    df = compute_rolling_form_features(df, windows=[3, 5, 10])
     df = compute_season_stats_features(df)
     df = compute_head_to_head_features(df)
     df = compute_matchup_style_features(df)
     df = compute_motivation_features(df)
     df = compute_streak_features(df)
     df = compute_season_win_pct_features(df)
+    df = compute_advanced_features(df)
 
     print(f"\n{'=' * 70}")
     print(f"FEATURE ENGINEERING COMPLETE")
