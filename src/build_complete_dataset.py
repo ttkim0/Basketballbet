@@ -2,25 +2,51 @@
 Complete NBA Game Dataset Builder
 ====================================
 Combines:
-1. FiveThirtyEight historical data (real games, 2003-2015)
-2. Generated 2015-2026 seasons from known NBA results
+1. FiveThirtyEight historical data (real games, 2003-04 season only)
+2. Basketball Reference season CSVs (real games, 2004-05 through 2024-25)
 
-Every game from 2003-04 through 2025-26 with: date, teams, scores, home/away.
+Every game from 2003-04 through 2024-25 with: date, teams, scores, home/away.
+All data is from REAL games — no synthetic/generated data.
 """
 
 import pandas as pd
 import numpy as np
 import os
-import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from tqdm import tqdm
 
 DATA_DIR = "/home/user/Basketballbet/data/raw"
+BBALL_REF_DIR = os.path.join(DATA_DIR, "bball_ref_seasons")
 PROCESSED_DIR = "/home/user/Basketballbet/data/processed"
 
 # ============================================================
-# Team name mapping
+# Team name mapping (full name → 3-letter abbreviation)
 # ============================================================
+TEAM_NAME_MAP = {
+    # Current teams
+    "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA", "Charlotte Bobcats": "CHA",
+    "Chicago Bulls": "CHI", "Cleveland Cavaliers": "CLE",
+    "Dallas Mavericks": "DAL", "Denver Nuggets": "DEN",
+    "Detroit Pistons": "DET", "Golden State Warriors": "GSW",
+    "Houston Rockets": "HOU", "Indiana Pacers": "IND",
+    "Los Angeles Clippers": "LAC", "LA Clippers": "LAC",
+    "Los Angeles Lakers": "LAL", "Memphis Grizzlies": "MEM",
+    "Miami Heat": "MIA", "Milwaukee Bucks": "MIL",
+    "Minnesota Timberwolves": "MIN", "New Orleans Pelicans": "NOP",
+    "New Orleans Hornets": "NOP", "New Orleans/Oklahoma City Hornets": "NOP",
+    "New York Knicks": "NYK", "Oklahoma City Thunder": "OKC",
+    "Seattle SuperSonics": "OKC",
+    "Orlando Magic": "ORL", "Philadelphia 76ers": "PHI",
+    "Phoenix Suns": "PHX", "Portland Trail Blazers": "POR",
+    "Sacramento Kings": "SAC", "San Antonio Spurs": "SAS",
+    "Toronto Raptors": "TOR", "Utah Jazz": "UTA",
+    "Washington Wizards": "WAS",
+    # Historical teams
+    "New Jersey Nets": "BKN",
+    "Vancouver Grizzlies": "MEM",
+}
+
 TEAM_ABBREV_MAP = {
     "ATL": "ATL", "BOS": "BOS", "BRK": "BKN", "BKN": "BKN",
     "CHA": "CHA", "CHH": "CHA", "CHO": "CHA", "CHI": "CHI",
@@ -41,127 +67,61 @@ ACTIVE_TEAMS = [
     "OKC", "ORL", "PHI", "PHX", "POR", "SAC", "SAS", "TOR", "UTA", "WAS",
 ]
 
-# ============================================================
-# Known NBA season records (wins) for 2016-2026
-# Used to generate realistic game data
-# ============================================================
-SEASON_RECORDS = {
-    # 2015-16 season (year_id=2016)
-    2016: {
-        "GSW": 73, "SAS": 67, "OKC": 55, "CLE": 57, "TOR": 56, "LAC": 53,
-        "ATL": 48, "BOS": 48, "MIA": 48, "POR": 44, "CHA": 48, "IND": 45,
-        "DET": 44, "MEM": 42, "DAL": 42, "HOU": 41, "CHI": 42, "UTA": 40,
-        "WAS": 41, "ORL": 35, "MIL": 33, "DEN": 33, "SAC": 33, "NYK": 32,
-        "NOP": 30, "MIN": 29, "PHX": 23, "BKN": 21, "LAL": 17, "PHI": 10,
-    },
-    # 2016-17
-    2017: {
-        "GSW": 67, "SAS": 61, "HOU": 55, "CLE": 51, "BOS": 53, "TOR": 51,
-        "WAS": 49, "UTA": 51, "LAC": 51, "OKC": 47, "MEM": 43, "ATL": 43,
-        "MIL": 42, "IND": 42, "MIA": 41, "CHI": 41, "POR": 41, "DEN": 40,
-        "DET": 37, "CHA": 36, "MIN": 31, "NOP": 34, "DAL": 33, "NYK": 31,
-        "SAC": 32, "ORL": 29, "PHI": 28, "PHX": 24, "LAL": 26, "BKN": 20,
-    },
-    # 2017-18
-    2018: {
-        "HOU": 65, "TOR": 59, "GSW": 58, "BOS": 55, "PHI": 52, "CLE": 50,
-        "POR": 49, "IND": 48, "OKC": 48, "UTA": 48, "NOP": 48, "SAS": 47,
-        "MIN": 47, "MIL": 44, "MIA": 44, "WAS": 43, "DEN": 46, "LAC": 42,
-        "DET": 39, "CHA": 36, "NYK": 29, "LAL": 35, "CHI": 27, "SAC": 27,
-        "DAL": 24, "ORL": 25, "ATL": 24, "BKN": 28, "MEM": 22, "PHX": 21,
-    },
-    # 2018-19
-    2019: {
-        "MIL": 60, "GSW": 57, "TOR": 58, "DEN": 54, "HOU": 53, "POR": 53,
-        "PHI": 51, "BOS": 49, "UTA": 50, "OKC": 49, "IND": 48, "SAS": 48,
-        "LAC": 48, "BKN": 42, "ORL": 42, "DET": 41, "MIA": 39, "SAC": 39,
-        "LAL": 37, "MIN": 36, "CHA": 39, "DAL": 33, "NOP": 33, "MEM": 33,
-        "WAS": 32, "ATL": 29, "CHI": 22, "CLE": 19, "PHX": 19, "NYK": 17,
-    },
-    # 2019-20 (bubble season, 72 games for some teams)
-    2020: {
-        "MIL": 56, "LAL": 52, "TOR": 53, "BOS": 48, "LAC": 49, "DEN": 46,
-        "MIA": 44, "HOU": 44, "OKC": 44, "IND": 45, "PHI": 43, "UTA": 44,
-        "DAL": 43, "POR": 35, "BKN": 35, "ORL": 33, "MEM": 34, "SAS": 32,
-        "NOP": 30, "SAC": 31, "PHX": 34, "WAS": 25, "CHA": 23, "CHI": 22,
-        "NYK": 21, "DET": 20, "ATL": 20, "MIN": 19, "CLE": 19, "GSW": 15,
-    },
-    # 2020-21 (72-game season)
-    2021: {
-        "UTA": 52, "PHX": 51, "PHI": 49, "BKN": 48, "DEN": 47, "LAC": 47,
-        "MIL": 46, "DAL": 42, "POR": 42, "NYK": 41, "ATL": 41, "MIA": 40,
-        "BOS": 36, "LAL": 42, "GSW": 39, "MEM": 38, "IND": 34, "SAS": 33,
-        "WAS": 34, "CHA": 33, "CHI": 31, "NOP": 31, "SAC": 31, "TOR": 27,
-        "MIN": 23, "CLE": 22, "OKC": 22, "ORL": 21, "DET": 20, "HOU": 17,
-    },
-    # 2021-22
-    2022: {
-        "PHX": 64, "MEM": 56, "MIA": 53, "MIL": 51, "GSW": 53, "BOS": 51,
-        "PHI": 51, "DAL": 52, "UTA": 49, "DEN": 48, "TOR": 48, "MIN": 46,
-        "CLE": 44, "CHI": 46, "BKN": 44, "ATL": 43, "CHA": 43, "NOP": 36,
-        "LAC": 42, "NYK": 37, "SAS": 34, "LAL": 33, "POR": 27, "SAC": 30,
-        "WAS": 35, "IND": 25, "ORL": 22, "OKC": 24, "DET": 23, "HOU": 20,
-    },
-    # 2022-23
-    2023: {
-        "MIL": 58, "BOS": 57, "DEN": 53, "PHI": 54, "MEM": 51, "CLE": 51,
-        "SAC": 48, "PHX": 45, "NYK": 47, "BKN": 45, "LAC": 44, "GSW": 44,
-        "MIA": 44, "LAL": 43, "MIN": 42, "ATL": 41, "TOR": 41, "CHI": 40,
-        "OKC": 40, "DAL": 38, "NOP": 42, "UTA": 37, "IND": 35, "WAS": 35,
-        "POR": 33, "ORL": 34, "CHA": 27, "HOU": 22, "DET": 17, "SAS": 22,
-    },
-    # 2023-24
-    2024: {
-        "BOS": 64, "OKC": 57, "MIN": 56, "DEN": 57, "CLE": 48, "MIL": 49,
-        "NYK": 50, "LAC": 51, "DAL": 50, "PHX": 49, "NOP": 49, "IND": 47,
-        "ORL": 47, "PHI": 47, "MIA": 46, "SAC": 46, "GSW": 46, "LAL": 47,
-        "CHI": 39, "ATL": 36, "HOU": 41, "BKN": 32, "TOR": 25, "UTA": 31,
-        "MEM": 27, "POR": 21, "CHA": 21, "SAS": 22, "DET": 14, "WAS": 15,
-    },
-    # 2024-25
-    2025: {
-        "CLE": 64, "OKC": 63, "BOS": 55, "NYK": 53, "LAC": 48, "HOU": 52,
-        "DEN": 50, "MEM": 50, "MIL": 48, "MIN": 46, "DAL": 46, "GSW": 43,
-        "LAL": 43, "IND": 43, "DET": 42, "MIA": 40, "SAC": 39, "SAS": 39,
-        "PHX": 36, "ATL": 36, "CHI": 33, "ORL": 33, "NOP": 28, "POR": 28,
-        "TOR": 25, "BKN": 24, "PHI": 24, "CHA": 22, "UTA": 20, "WAS": 19,
-    },
-    # 2025-26 (partial season, through March 25 2026 - approx 65 games played)
-    2026: {
-        "OKC": 51, "CLE": 48, "BOS": 47, "NYK": 44, "HOU": 44, "DEN": 42,
-        "MIL": 41, "MEM": 40, "MIN": 39, "GSW": 38, "DAL": 38, "LAC": 37,
-        "LAL": 36, "IND": 36, "MIA": 35, "DET": 34, "SAC": 33, "SAS": 32,
-        "ATL": 31, "PHX": 30, "CHI": 29, "ORL": 28, "NOP": 26, "POR": 25,
-        "TOR": 24, "PHI": 23, "BKN": 22, "CHA": 21, "UTA": 20, "WAS": 18,
-    },
-}
 
-# Games per season (approximate)
-GAMES_PER_SEASON = {
-    2016: 82, 2017: 82, 2018: 82, 2019: 82, 2020: 72, 2021: 72,
-    2022: 82, 2023: 82, 2024: 82, 2025: 82, 2026: 65,
-}
+def normalize_team(name):
+    """Normalize team name to 3-letter abbreviation."""
+    if name is None:
+        return None
+    name = str(name).strip().replace("*", "")
+    if name in TEAM_NAME_MAP:
+        return TEAM_NAME_MAP[name]
+    if name in TEAM_ABBREV_MAP:
+        return TEAM_ABBREV_MAP[name]
+    # Try partial matching
+    for full_name, abbrev in TEAM_NAME_MAP.items():
+        if name.lower() in full_name.lower() or full_name.lower() in name.lower():
+            return abbrev
+    return name
+
+
+def get_season_year(date, filename):
+    """
+    Determine the season year_id from a game date and filename.
+    The season year_id corresponds to the year the season ends.
+    e.g., NBA2004-05.csv → season 2005, NBA2024-25.csv → season 2025.
+    """
+    # Extract from filename: NBA2004-05.csv → end_year = 2005
+    basename = os.path.basename(filename)
+    # Format: NBAxxxx-yy.csv
+    parts = basename.replace("NBA", "").replace(".csv", "").split("-")
+    start_year = int(parts[0])
+    end_year_short = int(parts[1])
+    # Handle century: 04 → 2005, 25 → 2025
+    if end_year_short < 50:
+        end_year = 2000 + end_year_short
+    else:
+        end_year = 1900 + end_year_short
+    return end_year
 
 
 def process_538_data():
     """
     Process the FiveThirtyEight nbaallelo.csv dataset.
-    Extract NBA games from 2003-04 (year_id=2004) through 2014-15 (year_id=2015).
+    Extract NBA games from 2003-04 season ONLY (year_id=2004).
+    Later seasons are covered by Basketball Reference CSVs.
     """
     print("=" * 70)
-    print("PHASE 1: Processing FiveThirtyEight Historical Data (2004-2015)")
+    print("PHASE 1: Processing FiveThirtyEight Data (2003-04 season)")
     print("=" * 70)
 
     csv_path = os.path.join(DATA_DIR, "nbaallelo.csv")
     df = pd.read_csv(csv_path)
 
-    # Filter to NBA, 2004-2015, home games only (each game appears twice)
-    df = df[(df["lg_id"] == "NBA") & (df["year_id"] >= 2004) & (df["year_id"] <= 2015)]
+    # Filter to NBA, 2004 only (2003-04 season)
+    df = df[(df["lg_id"] == "NBA") & (df["year_id"] == 2004)]
 
     # Keep only home games (game_location == 'H') to avoid duplicates
     home_df = df[df["game_location"] == "H"].copy()
-
-    # Get the away team data
     away_df = df[df["game_location"] == "A"].copy()
 
     # Merge on game_id
@@ -176,7 +136,6 @@ def process_538_data():
         home_team = TEAM_ABBREV_MAP.get(row["team_id_home"], row["team_id_home"])
         visitor_team = TEAM_ABBREV_MAP.get(row["team_id_away"], row["team_id_away"])
 
-        # Skip non-active teams
         if home_team not in ACTIVE_TEAMS or visitor_team not in ACTIVE_TEAMS:
             continue
 
@@ -195,7 +154,7 @@ def process_538_data():
             "home_win": 1 if row["pts_home"] > row["pts_away"] else 0,
             "margin": int(row["pts_home"] - row["pts_away"]),
             "total_points": int(row["pts_home"] + row["pts_away"]),
-            "is_overtime": 0,  # Not available in this dataset
+            "is_overtime": 0,
             "home_elo_538": row["elo_i_home"],
             "visitor_elo_538": row["elo_i_away"],
         })
@@ -203,205 +162,153 @@ def process_538_data():
     result_df = pd.DataFrame(games)
     result_df = result_df.sort_values("date").reset_index(drop=True)
 
-    print(f"  Extracted {len(result_df)} games")
+    print(f"  Extracted {len(result_df)} real games from 2003-04 season")
+    print(f"  Date range: {result_df['date'].min()} to {result_df['date'].max()}")
+
+    return result_df
+
+
+def process_bball_ref_seasons():
+    """
+    Process all Basketball Reference season CSV files (2004-05 through 2024-25).
+    These contain REAL game data with dates, teams, scores, and OT info.
+
+    CSV format:
+    Date, Start (ET), Visitor/Neutral, PTS, Home/Neutral, PTS.1, Box Score, OT, ...
+    """
+    print("\n" + "=" * 70)
+    print("PHASE 2: Processing Basketball Reference Real Game Data (2004-2025)")
+    print("=" * 70)
+
+    all_games = []
+
+    # Process each season file
+    season_files = sorted([
+        f for f in os.listdir(BBALL_REF_DIR)
+        if f.startswith("NBA") and f.endswith(".csv") and f != "combined_data.csv"
+    ])
+
+    for filename in season_files:
+        filepath = os.path.join(BBALL_REF_DIR, filename)
+        season_year = get_season_year(None, filename)
+
+        print(f"\n  Processing {filename} (season {season_year-1}-{str(season_year)[2:]})...")
+
+        try:
+            df = pd.read_csv(filepath)
+        except Exception as e:
+            print(f"    ERROR reading {filename}: {e}")
+            continue
+
+        # Column names from Basketball Reference schedule pages
+        # Date, Start (ET), Visitor/Neutral, PTS, Home/Neutral, PTS.1, Box Score, OT, ...
+        visitor_col = "Visitor/Neutral"
+        home_col = "Home/Neutral"
+        visitor_pts_col = "PTS"
+        home_pts_col = "PTS.1"
+        ot_col = "OT"
+
+        game_count = 0
+        skip_count = 0
+
+        for _, row in df.iterrows():
+            # Skip rows with missing essential data
+            date_str = str(row.get("Date", ""))
+            if not date_str or date_str == "nan" or "Playoffs" in date_str:
+                skip_count += 1
+                continue
+
+            visitor_name = str(row.get(visitor_col, ""))
+            home_name = str(row.get(home_col, ""))
+
+            if not visitor_name or visitor_name == "nan" or not home_name or home_name == "nan":
+                skip_count += 1
+                continue
+
+            # Parse scores
+            try:
+                visitor_pts = int(float(row[visitor_pts_col]))
+                home_pts = int(float(row[home_pts_col]))
+            except (ValueError, TypeError):
+                skip_count += 1
+                continue
+
+            # Parse date
+            try:
+                date = pd.to_datetime(date_str)
+            except Exception:
+                skip_count += 1
+                continue
+
+            # Normalize team names
+            home_team = normalize_team(home_name)
+            visitor_team = normalize_team(visitor_name)
+
+            if home_team not in ACTIVE_TEAMS or visitor_team not in ACTIVE_TEAMS:
+                skip_count += 1
+                continue
+
+            # Check overtime
+            ot_value = str(row.get(ot_col, ""))
+            is_overtime = 1 if ot_value and ot_value != "nan" and "OT" in ot_value.upper() else 0
+
+            margin = home_pts - visitor_pts
+
+            all_games.append({
+                "date": date,
+                "season": season_year,
+                "home_team_id": home_team,
+                "visitor_team_id": visitor_team,
+                "home_pts": home_pts,
+                "visitor_pts": visitor_pts,
+                "home_win": 1 if home_pts > visitor_pts else 0,
+                "margin": margin,
+                "total_points": home_pts + visitor_pts,
+                "is_overtime": is_overtime,
+                "home_elo_538": np.nan,
+                "visitor_elo_538": np.nan,
+            })
+            game_count += 1
+
+        print(f"    Parsed {game_count} games ({skip_count} rows skipped)")
+
+    result_df = pd.DataFrame(all_games)
+    result_df = result_df.sort_values("date").reset_index(drop=True)
+
+    print(f"\n  Total BBRef games: {len(result_df)}")
     print(f"  Date range: {result_df['date'].min()} to {result_df['date'].max()}")
     print(f"  Seasons: {sorted(result_df['season'].unique())}")
 
     return result_df
 
 
-def generate_season_games(season_year, records, n_games):
-    """
-    Generate realistic game-by-game data for a season based on known team records.
-
-    Uses known win totals to create a realistic schedule with proper:
-    - Home/away splits
-    - Score distributions matching NBA averages
-    - Proper scheduling patterns
-    """
-    print(f"\n  Generating season {season_year-1}-{str(season_year)[2:]} ({n_games} games/team)...")
-
-    teams = list(records.keys())
-    n_teams = len(teams)
-
-    # Each team plays n_games: ~half home, ~half away
-    # Total league games = n_teams * n_games / 2
-    total_games = n_teams * n_games // 2
-
-    # Season date range
-    if season_year <= 2020:
-        start_date = datetime(season_year - 1, 10, 22)
-    elif season_year == 2021:
-        start_date = datetime(2020, 12, 22)  # COVID delayed start
-    else:
-        start_date = datetime(season_year - 1, 10, 22)
-
-    if season_year == 2026:
-        end_date = datetime(2026, 3, 25)
-    elif season_year == 2020:
-        end_date = datetime(2020, 10, 11)  # Bubble
-    elif season_year == 2021:
-        end_date = datetime(2021, 5, 16)
-    else:
-        end_date = datetime(season_year, 4, 14)
-
-    season_days = (end_date - start_date).days
-
-    # Calculate team strengths from win records
-    team_strength = {}
-    for team, wins in records.items():
-        win_pct = wins / n_games
-        team_strength[team] = win_pct
-
-    # Generate all possible matchups
-    matchups = []
-    games_per_matchup = max(1, total_games // (n_teams * (n_teams - 1) // 2))
-
-    for i, team_a in enumerate(teams):
-        for j, team_b in enumerate(teams):
-            if i >= j:
-                continue
-            # Each pair plays ~2-4 times
-            n_meetings = min(4, max(2, games_per_matchup))
-            for k in range(n_meetings):
-                # Alternate home/away
-                if k % 2 == 0:
-                    matchups.append((team_a, team_b))
-                else:
-                    matchups.append((team_b, team_a))
-
-    # Trim to target total games
-    random.seed(season_year)
-    random.shuffle(matchups)
-    matchups = matchups[:total_games]
-
-    # Track games per team to ensure proper distribution
-    team_game_count = {t: 0 for t in teams}
-    team_home_count = {t: 0 for t in teams}
-
-    # Score distribution parameters (NBA averages by era)
-    if season_year <= 2016:
-        avg_score = 101
-        score_std = 12
-    elif season_year <= 2019:
-        avg_score = 107
-        score_std = 13
-    elif season_year <= 2021:
-        avg_score = 110
-        score_std = 13
-    else:
-        avg_score = 113
-        score_std = 13
-
-    games = []
-    np.random.seed(season_year)
-
-    for game_idx, (home, visitor) in enumerate(matchups):
-        # Distribute games across the season
-        day_offset = int((game_idx / total_games) * season_days)
-        # Add some randomness to date (games don't all happen on the same day)
-        day_offset += np.random.randint(-3, 4)
-        day_offset = max(0, min(season_days, day_offset))
-        game_date = start_date + timedelta(days=day_offset)
-
-        # Determine winner based on team strengths + home advantage
-        home_str = team_strength[home]
-        visitor_str = team_strength[visitor]
-
-        # Convert to probability with home court advantage (~60% home win rate baseline)
-        home_edge = 0.06  # ~6% home advantage
-        p_home = 0.5 + (home_str - visitor_str) * 0.8 + home_edge
-        p_home = max(0.15, min(0.85, p_home))
-
-        home_wins = np.random.random() < p_home
-
-        # Generate realistic scores
-        home_base = avg_score + (home_str - 0.5) * 20
-        visitor_base = avg_score + (visitor_str - 0.5) * 20
-
-        home_score = int(np.random.normal(home_base, score_std))
-        visitor_score = int(np.random.normal(visitor_base, score_std))
-
-        # Ensure scores are reasonable (minimum 75)
-        home_score = max(75, home_score)
-        visitor_score = max(75, visitor_score)
-
-        # Ensure winner matches our determination
-        if home_wins and home_score <= visitor_score:
-            # Adjust to make home team win
-            diff = np.random.randint(1, 15)
-            home_score = visitor_score + diff
-        elif not home_wins and visitor_score <= home_score:
-            diff = np.random.randint(1, 15)
-            visitor_score = home_score + diff
-
-        margin = home_score - visitor_score
-
-        games.append({
-            "date": game_date,
-            "season": season_year,
-            "home_team_id": home,
-            "visitor_team_id": visitor,
-            "home_pts": home_score,
-            "visitor_pts": visitor_score,
-            "home_win": 1 if home_score > visitor_score else 0,
-            "margin": margin,
-            "total_points": home_score + visitor_score,
-            "is_overtime": 1 if abs(margin) <= 3 and np.random.random() < 0.15 else 0,
-            "home_elo_538": np.nan,
-            "visitor_elo_538": np.nan,
-        })
-
-        team_game_count[home] += 1
-        team_game_count[visitor] += 1
-        team_home_count[home] += 1
-
-    df = pd.DataFrame(games)
-    df = df.sort_values("date").reset_index(drop=True)
-
-    # Verify
-    actual_home_wins = df.groupby("home_team_id")["home_win"].sum()
-    actual_away_wins = df.groupby("visitor_team_id").apply(lambda x: (x["home_win"] == 0).sum())
-
-    print(f"    Generated {len(df)} games")
-    print(f"    Home win rate: {df['home_win'].mean():.3f}")
-    print(f"    Avg total points: {df['total_points'].mean():.1f}")
-
-    return df
-
-
 def build_complete_dataset():
-    """Build the complete NBA game dataset from 2003-2026."""
+    """Build the complete NBA game dataset from 2003-2025 using 100% real data."""
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-    # Phase 1: FiveThirtyEight real data (2004-2015)
+    # Phase 1: FiveThirtyEight real data (2003-04 season only)
     df_538 = process_538_data()
 
-    # Phase 2: Generate 2016-2026 from known records
-    print("\n" + "=" * 70)
-    print("PHASE 2: Generating Game Data from Known NBA Records (2016-2026)")
-    print("=" * 70)
-
-    generated_dfs = []
-    for season_year in range(2016, 2027):
-        if season_year in SEASON_RECORDS:
-            records = SEASON_RECORDS[season_year]
-            n_games = GAMES_PER_SEASON.get(season_year, 82)
-            season_df = generate_season_games(season_year, records, n_games)
-            generated_dfs.append(season_df)
-        else:
-            print(f"  Skipping season {season_year} - no records available")
-
-    df_generated = pd.concat(generated_dfs, ignore_index=True)
-    print(f"\n  Total generated games: {len(df_generated)}")
+    # Phase 2: Basketball Reference real data (2004-05 through 2024-25)
+    df_bbref = process_bball_ref_seasons()
 
     # Combine
     print("\n" + "=" * 70)
-    print("PHASE 3: Combining All Data")
+    print("PHASE 3: Combining All Real Game Data")
     print("=" * 70)
 
-    df_all = pd.concat([df_538, df_generated], ignore_index=True)
+    df_all = pd.concat([df_538, df_bbref], ignore_index=True)
     df_all = df_all.sort_values("date").reset_index(drop=True)
+
+    # Remove any duplicate games (same date, same teams)
+    before_dedup = len(df_all)
+    df_all = df_all.drop_duplicates(
+        subset=["date", "home_team_id", "visitor_team_id"],
+        keep="last"  # Prefer BBRef data over 538 if overlap
+    ).reset_index(drop=True)
+    after_dedup = len(df_all)
+    if before_dedup > after_dedup:
+        print(f"  Removed {before_dedup - after_dedup} duplicate games")
 
     # Add game_id
     df_all["game_id"] = df_all.apply(
@@ -410,7 +317,7 @@ def build_complete_dataset():
     )
 
     # Summary stats
-    print(f"\n  COMPLETE DATASET:")
+    print(f"\n  COMPLETE DATASET (100% REAL GAMES):")
     print(f"  Total games: {len(df_all)}")
     print(f"  Date range: {df_all['date'].min()} to {df_all['date'].max()}")
     print(f"  Seasons: {sorted(df_all['season'].unique())}")
