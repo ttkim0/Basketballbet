@@ -19,6 +19,7 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 
 from build_complete_dataset import build_complete_dataset
+from integrate_real_data import merge_all_into_games
 from elo_ratings import compute_elo_ratings
 from feature_engineering import compute_all_features
 from train_model import main as train_models
@@ -37,7 +38,7 @@ def run_full_pipeline():
     # Step 1: Build Complete Game Dataset
     # ============================================================
     print("\n\n" + "#" * 80)
-    print("# STEP 1/5: BUILD COMPLETE GAME DATASET")
+    print("# STEP 1/6: BUILD COMPLETE GAME DATASET")
     print("#" * 80)
     step_start = time.time()
 
@@ -46,10 +47,22 @@ def run_full_pipeline():
     print(f"  Dataset: {len(df)} games, {len(df.columns)} columns")
 
     # ============================================================
+    # Step 1b: Enrich with real box scores, odds, RAPTOR
+    # ============================================================
+    print("\n\n" + "#" * 80)
+    print("# STEP 1b/6: MERGE REAL DATA (BOX SCORES, ODDS, RAPTOR)")
+    print("#" * 80)
+    step_start = time.time()
+
+    df = merge_all_into_games(df)
+    print(f"\n  Step 1b completed in {time.time() - step_start:.1f}s")
+    print(f"  Enriched dataset: {len(df)} games, {len(df.columns)} columns")
+
+    # ============================================================
     # Step 2: Compute Elo Ratings
     # ============================================================
     print("\n\n" + "#" * 80)
-    print("# STEP 2/5: COMPUTE MARGIN-AWARE ELO RATINGS")
+    print("# STEP 2/6: COMPUTE MARGIN-AWARE ELO RATINGS")
     print("#" * 80)
     step_start = time.time()
 

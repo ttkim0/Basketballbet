@@ -91,6 +91,24 @@ FEATURE_COLUMNS = [
     "off_vs_def_mismatch_5", "off_vs_def_mismatch_10",
     "def_vs_off_mismatch_5", "def_vs_off_mismatch_10",
     "pace_mismatch",
+
+    # Tier 7: Real box score rolling stats (from actual game box scores)
+    "last5_efg_pct_diff_real", "last10_efg_pct_diff_real",
+    "last5_ts_pct_diff_real", "last10_ts_pct_diff_real",
+    "last5_tov_diff_real", "last10_tov_diff_real",
+    "last5_reb_diff_real", "last10_reb_diff_real",
+    "last5_ast_diff_real", "last10_ast_diff_real",
+    "last5_stl_diff_real", "last10_stl_diff_real",
+    "last5_blk_diff_real", "last10_blk_diff_real",
+    "last5_oreb_diff_real", "last10_oreb_diff_real",
+    "last5_three_pct_diff_real", "last10_three_pct_diff_real",
+    "last5_tov_rate_diff", "last10_tov_rate_diff",
+
+    # Tier 8: Betting odds / market features
+    "spread", "spread_abs", "market_prob_diff", "expected_total",
+
+    # Tier 9: RAPTOR player quality features
+    "raptor_total_diff", "raptor_off_diff", "raptor_def_diff", "war_diff",
 ]
 
 TARGET = "home_win"

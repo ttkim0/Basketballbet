@@ -654,6 +654,194 @@ def compute_season_win_pct_features(df):
     return df
 
 
+def compute_real_boxscore_rolling(df, windows=[5, 10]):
+    """
+    Compute rolling features from REAL box score data (FG%, 3P%, eFG%, TS%, TOV, REB, AST, STL, BLK).
+    Only available for games that have box score data merged in (2010-2024).
+    For games without box score data, these features will be NaN (filled with 0 later).
+    """
+    print("Computing rolling features from REAL box score data...")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Check which box score columns exist
+    box_cols_home = ['home_efg_pct', 'home_ts_pct', 'home_fg_pct', 'home_three_pct',
+                     'home_ft_pct', 'home_oreb', 'home_dreb', 'home_reb',
+                     'home_ast', 'home_stl', 'home_blk', 'home_tov', 'home_pf',
+                     'home_fga', 'home_fta', 'home_fg3a']
+    box_cols_vis = ['vis_efg_pct', 'vis_ts_pct', 'vis_fg_pct', 'vis_three_pct',
+                    'vis_ft_pct', 'vis_oreb', 'vis_dreb', 'vis_reb',
+                    'vis_ast', 'vis_stl', 'vis_blk', 'vis_tov', 'vis_pf',
+                    'vis_fga', 'vis_fta', 'vis_fg3a']
+
+    has_box = any(c in df.columns for c in box_cols_home)
+    if not has_box:
+        print("  No box score columns found, skipping real box score rolling features.")
+        return df
+
+    # Stats to track per team per game
+    tracked_stats = ['efg_pct', 'ts_pct', 'fg_pct', 'three_pct', 'ft_pct',
+                     'oreb', 'dreb', 'reb', 'ast', 'stl', 'blk', 'tov',
+                     'fga', 'fta', 'fg3a']
+
+    # Track per-team game history with real box stats
+    team_box_history = {}
+
+    # Pre-allocate columns
+    feature_cols = {}
+    for w in windows:
+        for stat in tracked_stats:
+            feature_cols[f"last{w}_{stat}_home_real"] = [np.nan] * len(df)
+            feature_cols[f"last{w}_{stat}_visitor_real"] = [np.nan] * len(df)
+
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Real Box Rolling"):
+        home = row["home_team_id"]
+        visitor = row["visitor_team_id"]
+
+        for team, prefix, box_prefix in [(home, "home", "home_"), (visitor, "visitor", "vis_")]:
+            if team not in team_box_history:
+                team_box_history[team] = []
+
+            history = team_box_history[team]
+
+            for w in windows:
+                if len(history) >= w:
+                    recent = history[-w:]
+                    for stat in tracked_stats:
+                        vals = [g.get(stat) for g in recent if g.get(stat) is not None]
+                        if vals:
+                            feature_cols[f"last{w}_{stat}_{prefix}_real"][idx] = np.mean(vals)
+
+        # After computing pregame features, add this game's box stats to history
+        for team, box_prefix in [(home, "home_"), (visitor, "vis_")]:
+            game_stats = {}
+            for stat in tracked_stats:
+                col = f"{box_prefix}{stat}"
+                if col in df.columns and pd.notna(row.get(col)):
+                    game_stats[stat] = row[col]
+            if game_stats:  # Only add if we have real data for this game
+                if team not in team_box_history:
+                    team_box_history[team] = []
+                team_box_history[team].append(game_stats)
+
+    # Add to dataframe
+    for col, values in feature_cols.items():
+        df[col] = values
+
+    # Compute differentials for key stats
+    for w in windows:
+        for stat in ['efg_pct', 'ts_pct', 'tov', 'reb', 'ast', 'stl', 'blk',
+                     'oreb', 'dreb', 'three_pct']:
+            h = f"last{w}_{stat}_home_real"
+            v = f"last{w}_{stat}_visitor_real"
+            if h in df.columns and v in df.columns:
+                df[f"last{w}_{stat}_diff_real"] = df[h] - df[v]
+
+    # Compute derived advanced stats
+    for w in windows:
+        # Turnover rate proxy (TOV / (FGA + 0.44*FTA + TOV))
+        for side in ['home', 'visitor']:
+            tov_col = f"last{w}_tov_{side}_real"
+            fga_col = f"last{w}_fga_{side}_real"
+            fta_col = f"last{w}_fta_{side}_real"
+            if all(c in df.columns for c in [tov_col, fga_col, fta_col]):
+                denom = df[fga_col] + 0.44 * df[fta_col] + df[tov_col]
+                df[f"last{w}_tov_rate_{side}"] = df[tov_col] / denom.replace(0, np.nan)
+
+        # TOV rate differential
+        h = f"last{w}_tov_rate_home"
+        v = f"last{w}_tov_rate_visitor"
+        if h in df.columns and v in df.columns:
+            df[f"last{w}_tov_rate_diff"] = df[h] - df[v]
+
+        # Rebounding edge (OREB% proxy)
+        for side in ['home', 'visitor']:
+            oreb_col = f"last{w}_oreb_{side}_real"
+            reb_col = f"last{w}_reb_{side}_real"
+            if oreb_col in df.columns and reb_col in df.columns:
+                df[f"last{w}_oreb_pct_{side}"] = df[oreb_col] / df[reb_col].replace(0, np.nan)
+
+        # 3P attempt rate (3PA / FGA)
+        for side in ['home', 'visitor']:
+            fg3a_col = f"last{w}_fg3a_{side}_real"
+            fga_col = f"last{w}_fga_{side}_real"
+            if fg3a_col in df.columns and fga_col in df.columns:
+                df[f"last{w}_three_rate_{side}"] = df[fg3a_col] / df[fga_col].replace(0, np.nan)
+
+    n_new = len(feature_cols) + sum(1 for c in df.columns if '_diff_real' in c or '_tov_rate_' in c
+                                     or '_oreb_pct_' in c or '_three_rate_' in c)
+    print(f"  Added {n_new} real box score rolling features")
+    return df
+
+
+def compute_odds_features(df):
+    """
+    Compute features from real betting odds data.
+    Market-implied probabilities are strong predictors — the betting market
+    is one of the best pregame forecasters.
+    """
+    print("Computing betting odds features...")
+
+    odds_cols = ['spread', 'opening_total', 'implied_prob_home', 'implied_prob_away',
+                 'ml_home', 'ml_away']
+    has_odds = any(c in df.columns for c in odds_cols)
+
+    if not has_odds:
+        print("  No odds columns found, skipping.")
+        return df
+
+    # Coerce numeric columns that may have string values
+    for col in ['spread', 'opening_total', 'implied_prob_home', 'implied_prob_away', 'ml_home', 'ml_away']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Spread (negative = home favored)
+    if 'spread' in df.columns:
+        df['spread_abs'] = df['spread'].abs()
+        # Spread already captures market expectation
+
+    # Market implied win probability differential
+    if 'implied_prob_home' in df.columns and 'implied_prob_away' in df.columns:
+        df['market_prob_diff'] = df['implied_prob_home'] - df['implied_prob_away']
+
+    # Over/under as proxy for expected pace/scoring environment
+    if 'opening_total' in df.columns:
+        df['expected_total'] = df['opening_total']
+
+    n_odds = sum(1 for c in ['spread', 'spread_abs', 'market_prob_diff', 'expected_total']
+                 if c in df.columns)
+    print(f"  Added {n_odds} odds-based features")
+    return df
+
+
+def compute_raptor_features(df):
+    """
+    Compute features from RAPTOR player ratings (aggregated to team-season level).
+    """
+    print("Computing RAPTOR-based features...")
+
+    raptor_cols = ['home_raptor_off', 'home_raptor_def', 'home_raptor_total',
+                   'vis_raptor_off', 'vis_raptor_def', 'vis_raptor_total',
+                   'home_war', 'vis_war']
+    has_raptor = any(c in df.columns for c in raptor_cols)
+
+    if not has_raptor:
+        print("  No RAPTOR columns found, skipping.")
+        return df
+
+    if 'home_raptor_total' in df.columns and 'vis_raptor_total' in df.columns:
+        df['raptor_total_diff'] = df['home_raptor_total'] - df['vis_raptor_total']
+        df['raptor_off_diff'] = df['home_raptor_off'] - df['vis_raptor_off']
+        df['raptor_def_diff'] = df['home_raptor_def'] - df['vis_raptor_def']
+
+    if 'home_war' in df.columns and 'vis_war' in df.columns:
+        df['war_diff'] = df['home_war'] - df['vis_war']
+
+    n_raptor = sum(1 for c in ['raptor_total_diff', 'raptor_off_diff',
+                                'raptor_def_diff', 'war_diff'] if c in df.columns)
+    print(f"  Added {n_raptor} RAPTOR-based features")
+    return df
+
+
 def compute_advanced_features(df):
     """
     Compute advanced derived features that combine base features for higher signal.
@@ -784,6 +972,9 @@ def compute_all_features(df):
     df = compute_motivation_features(df)
     df = compute_streak_features(df)
     df = compute_season_win_pct_features(df)
+    df = compute_real_boxscore_rolling(df, windows=[5, 10])
+    df = compute_odds_features(df)
+    df = compute_raptor_features(df)
     df = compute_advanced_features(df)
 
     print(f"\n{'=' * 70}")

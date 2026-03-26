@@ -1,27 +1,27 @@
 {
   "logistic_regression": {
-    "accuracy": 0.6609880749574105,
-    "log_loss": 0.6119658395328922,
-    "auc_roc": 0.7223248958966921,
-    "brier_score": 0.21216925812154225
+    "accuracy": 0.6899488926746167,
+    "log_loss": 0.5924175751060491,
+    "auc_roc": 0.7450404716230757,
+    "brier_score": 0.20339652359525393
   },
   "xgboost": {
-    "accuracy": 0.666098807495741,
-    "log_loss": 0.6141607290754131,
-    "auc_roc": 0.7200586019744537,
-    "brier_score": 0.21309849619865417
+    "accuracy": 0.6788756388415673,
+    "log_loss": 0.5952107407716004,
+    "auc_roc": 0.7434350582510643,
+    "brier_score": 0.2047174721956253
   },
   "lightgbm": {
-    "accuracy": 0.651618398637138,
-    "log_loss": 0.6196749835591745,
-    "auc_roc": 0.7123385813877323,
-    "brier_score": 0.21572328786622902
+    "accuracy": 0.6805792163543442,
+    "log_loss": 0.5954277551239266,
+    "auc_roc": 0.741396855846161,
+    "brier_score": 0.20491183397046375
   },
   "ensemble": {
-    "accuracy": 0.6695059625212947,
-    "log_loss": 0.6121943844966774,
-    "auc_roc": 0.7205235577597903,
-    "brier_score": 0.21232249643425885
+    "accuracy": 0.6882453151618398,
+    "log_loss": 0.5912943661427117,
+    "auc_roc": 0.7482249801150985,
+    "brier_score": 0.2028241178005698
   },
   "ensemble_method": "extended_meta",
   "ensemble_threshold": 0.5,
@@ -85,11 +85,39 @@
     "off_vs_def_mismatch_10",
     "def_vs_off_mismatch_5",
     "def_vs_off_mismatch_10",
-    "pace_mismatch"
+    "pace_mismatch",
+    "last5_efg_pct_diff_real",
+    "last10_efg_pct_diff_real",
+    "last5_ts_pct_diff_real",
+    "last10_ts_pct_diff_real",
+    "last5_tov_diff_real",
+    "last10_tov_diff_real",
+    "last5_reb_diff_real",
+    "last10_reb_diff_real",
+    "last5_ast_diff_real",
+    "last10_ast_diff_real",
+    "last5_stl_diff_real",
+    "last10_stl_diff_real",
+    "last5_blk_diff_real",
+    "last10_blk_diff_real",
+    "last5_oreb_diff_real",
+    "last10_oreb_diff_real",
+    "last5_three_pct_diff_real",
+    "last10_three_pct_diff_real",
+    "last5_tov_rate_diff",
+    "last10_tov_rate_diff",
+    "spread",
+    "spread_abs",
+    "market_prob_diff",
+    "expected_total",
+    "raptor_total_diff",
+    "raptor_off_diff",
+    "raptor_def_diff",
+    "war_diff"
   ],
-  "n_features": 60,
-  "n_train": 25689,
+  "n_features": 88,
+  "n_train": 25690,
   "n_val": 1319,
   "n_test": 1174,
-  "trained_at": "2026-03-26T19:04:15.870568"
+  "trained_at": "2026-03-26T22:17:17.040809"
 }
