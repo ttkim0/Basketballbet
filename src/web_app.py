@@ -13,12 +13,14 @@ Then open http://localhost:5050 in your browser.
 import os
 import sys
 import json
+import traceback
+import urllib.request
 import numpy as np
 import pandas as pd
 import joblib
 import xgboost as xgb
 import lightgbm as lgbm
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, Response
 
 # Setup paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -312,15 +314,53 @@ def index():
 
 @app.route("/api/predict", methods=["POST"])
 def api_predict():
-    data = request.json
-    home = data.get("home", "").upper()
-    away = data.get("away", "").upper()
-    if home not in NBA_TEAMS or away not in NBA_TEAMS:
-        return jsonify({"error": "Invalid team code"}), 400
-    if home == away:
-        return jsonify({"error": "Home and away must be different"}), 400
-    result = run_prediction(home, away)
-    return jsonify(result)
+    try:
+        data = request.json
+        home = data.get("home", "").upper()
+        away = data.get("away", "").upper()
+        if home not in NBA_TEAMS or away not in NBA_TEAMS:
+            return jsonify({"error": "Invalid team code"}), 400
+        if home == away:
+            return jsonify({"error": "Home and away must be different"}), 400
+        result = run_prediction(home, away)
+        return jsonify(result)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
+# NBA CDN Proxy (avoids CORS issues in the browser)
+# ============================================================
+def _fetch_nba_url(url):
+    """Server-side fetch from NBA CDN."""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Referer": "https://www.nba.com/",
+    })
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return resp.read()
+
+
+@app.route("/api/nba/scoreboard")
+def nba_scoreboard_proxy():
+    """Proxy today's NBA scoreboard to avoid CORS."""
+    try:
+        data = _fetch_nba_url("https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json")
+        return Response(data, mimetype="application/json")
+    except Exception as e:
+        return jsonify({"error": f"Could not fetch NBA scoreboard: {e}"}), 502
+
+
+@app.route("/api/nba/boxscore/<game_id>")
+def nba_boxscore_proxy(game_id):
+    """Proxy a live NBA box score to avoid CORS."""
+    try:
+        data = _fetch_nba_url(f"https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{game_id}.json")
+        return Response(data, mimetype="application/json")
+    except Exception as e:
+        return jsonify({"error": f"Could not fetch box score: {e}"}), 502
 
 
 @app.route("/api/teams")
@@ -512,7 +552,7 @@ HTML_TEMPLATE = r"""
   <div class="live-section">
     <h2>Today's Games <span id="live-badge" class="live-badge" style="display:none">LIVE</span></h2>
     <div id="live-loading">Fetching today's games from NBA...</div>
-    <div id="live-error">Could not load live games. Use the manual picker below.</div>
+    <div id="live-error">Could not load live games (NBA CDN may be blocked in this environment). Use the manual picker below - predictions work fine without live data!</div>
     <div id="live-games" class="live-games"></div>
   </div>
 
@@ -620,8 +660,9 @@ HTML_TEMPLATE = r"""
 </div>
 
 <script>
-const NBA_SCOREBOARD_URL = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json";
-const NBA_BOXSCORE_URL = "https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{GAME_ID}.json";
+// Use our Flask proxy to avoid CORS issues with NBA CDN
+const NBA_SCOREBOARD_URL = "/api/nba/scoreboard";
+const NBA_BOXSCORE_URL = "/api/nba/boxscore/{GAME_ID}";
 
 let todaysGames = [];
 let selectedGameId = null;
