@@ -34,6 +34,90 @@ EXT_META_RAW_FEATURES = [
 ]
 
 # ============================================================
+# RL Probability Adjustments (from reinforcement_learning.py)
+# ============================================================
+# These correct systematic biases discovered by the RL error analysis.
+# Applied after the ensemble prediction to nudge probabilities.
+
+from reinforcement_learning import categorize_game, get_team_tier
+
+RL_ADJUSTMENTS_PATH = os.path.join(BASE_DIR, "logs/rl_results/error_patterns.json")
+
+def load_rl_adjustments():
+    """Load RL-discovered probability adjustments."""
+    if not os.path.exists(RL_ADJUSTMENTS_PATH):
+        return {}
+    with open(RL_ADJUSTMENTS_PATH) as f:
+        patterns = json.load(f)
+    # Build adjustment map: pattern_name -> correction value
+    # Only use univariate patterns with 50+ games and significant excess error
+    adjustments = {}
+    for p in patterns:
+        if int(p.get("n_games", 0)) >= 50 and abs(p.get("excess_error", 0)) >= 0.03:
+            adjustments[p["name"]] = p["correction"]
+    return adjustments
+
+
+def apply_rl_adjustment(ensemble_prob, feat_values):
+    """Apply RL corrections to ensemble probability based on game context."""
+    if not RL_ADJUSTMENTS:
+        return ensemble_prob
+
+    # Build a fake row for categorize_game
+    row = {
+        "elo_rating_diff": feat_values.get("elo_rating_diff", 0),
+        "home_win": 0,  # doesn't matter for categorization
+        "home_season_win_pct": feat_values.get("home_season_win_pct", 0.5),
+        "visitor_season_win_pct": feat_values.get("visitor_season_win_pct", 0.5),
+        "home_b2b": feat_values.get("home_b2b", 0),
+        "visitor_b2b": feat_values.get("visitor_b2b", 0),
+        "home_3in4": feat_values.get("home_3in4", 0),
+        "visitor_3in4": feat_values.get("visitor_3in4", 0),
+        "home_streak": feat_values.get("home_streak", 0),
+        "visitor_streak": feat_values.get("visitor_streak", 0),
+        "rest_diff": feat_values.get("rest_diff", 0),
+        "spread": feat_values.get("spread", 0),
+        "travel_miles_home": feat_values.get("travel_miles_home", 0),
+        "travel_miles_visitor": feat_values.get("travel_miles_visitor", 0),
+        "altitude_edge_home": feat_values.get("altitude_edge_home", 0),
+        "date": pd.Timestamp.now(),
+    }
+
+    tags = categorize_game(row, ensemble_prob)
+
+    total_adj = 0.0
+    matched_rules = []
+
+    for pattern_name, correction in RL_ADJUSTMENTS.items():
+        # Check univariate patterns: "category=value"
+        if "+" not in pattern_name and "=" in pattern_name:
+            cat, val = pattern_name.split("=", 1)
+            if str(tags.get(cat)) == val:
+                total_adj += correction
+                matched_rules.append((pattern_name, correction))
+        # Check interaction patterns: "cat1=val1+cat2=val2"
+        elif "+" in pattern_name:
+            parts = pattern_name.split("+")
+            if len(parts) == 2:
+                match = True
+                for part in parts:
+                    if "=" in part:
+                        cat, val = part.split("=", 1)
+                        if str(tags.get(cat)) != val:
+                            match = False
+                            break
+                if match:
+                    total_adj += correction
+                    matched_rules.append((pattern_name, correction))
+
+    # Cap total adjustment to avoid wild swings
+    total_adj = np.clip(total_adj, -0.15, 0.15)
+    adjusted = np.clip(ensemble_prob + total_adj, 0.01, 0.99)
+
+    return adjusted, total_adj, matched_rules
+
+
+# ============================================================
 # Load models and data at startup
 # ============================================================
 print("Loading models...")
@@ -49,6 +133,10 @@ xgb_model = xgb.Booster()
 xgb_model.load_model(os.path.join(MODEL_DIR, "xgboost_model.json"))
 MODELS["xgb"] = xgb_model
 MODELS["lgb"] = lgbm.Booster(model_file=os.path.join(MODEL_DIR, "lightgbm_model.txt"))
+
+print("Loading RL adjustments...")
+RL_ADJUSTMENTS = load_rl_adjustments()
+print(f"  {len(RL_ADJUSTMENTS)} RL correction rules loaded")
 
 print("Loading Elo ratings...")
 elo_df = pd.read_csv(os.path.join(DATA_DIR, "processed/final_elo_ratings.csv"))
@@ -170,7 +258,10 @@ def run_prediction(home_team, away_team):
     base_probs = np.array([[lr_prob, xgb_prob, lgb_prob]])
     raw_feats = X[EXT_META_RAW_FEATURES].fillna(0).values
     meta_input = np.column_stack([base_probs, raw_feats])
-    ensemble_prob = float(MODELS["ext_meta"].predict_proba(meta_input)[0, 1])
+    raw_ensemble_prob = float(MODELS["ext_meta"].predict_proba(meta_input)[0, 1])
+
+    # Apply RL corrections
+    ensemble_prob, rl_adjustment, rl_rules = apply_rl_adjustment(raw_ensemble_prob, feat_values)
 
     threshold = MODELS["config"].get("threshold", 0.52)
     winner = home_team if ensemble_prob >= threshold else away_team
@@ -201,6 +292,10 @@ def run_prediction(home_team, away_team):
         "elo_home": float(round(ELO_RATINGS.get(home_team, 1500), 1)),
         "elo_away": float(round(ELO_RATINGS.get(away_team, 1500), 1)),
         "key_features": {k: float(v) for k, v in key_features.items()},
+        "raw_ensemble_prob": round(raw_ensemble_prob, 4),
+        "rl_adjustment": round(float(rl_adjustment), 4),
+        "rl_rules_matched": len(rl_rules),
+        "rl_rules": [{"pattern": r[0], "correction": round(float(r[1]), 4)} for r in rl_rules[:5]],
     }
     # Ensure all values are JSON-serializable native Python types
     return json.loads(json.dumps(result, default=lambda o: float(o) if hasattr(o, '__float__') else str(o)))
@@ -503,6 +598,16 @@ HTML_TEMPLATE = r"""
         <div class="name" style="color: #f57c00;">Ensemble</div>
         <div class="prob" id="r-ens"></div>
       </div>
+      <div class="model-card" style="border-color: #4caf50;">
+        <div class="name" style="color: #4caf50;">RL-Adjusted</div>
+        <div class="prob" id="r-rl"></div>
+      </div>
+    </div>
+
+    <div id="rl-info" style="background:#1a2e1a; border:1px solid #2e7d32; border-radius:8px; padding:14px; margin-bottom:16px; display:none;">
+      <h3 style="font-size:14px; color:#4caf50; margin-bottom:8px;">RL Corrections Applied</h3>
+      <div id="rl-adj-text" style="font-size:13px; color:#aaa;"></div>
+      <div id="rl-rules-list" style="font-size:12px; color:#888; margin-top:6px;"></div>
     </div>
 
     <h3 style="font-size:15px; color:#f57c00; margin-bottom:10px;">Key Features</h3>
@@ -661,7 +766,26 @@ async function predictGame() {
     document.getElementById("r-lr").innerHTML = probHTML(r.lr_prob, r.home_team, r.away_team);
     document.getElementById("r-xgb").innerHTML = probHTML(r.xgb_prob, r.home_team, r.away_team);
     document.getElementById("r-lgb").innerHTML = probHTML(r.lgb_prob, r.home_team, r.away_team);
-    document.getElementById("r-ens").innerHTML = probHTML(r.ensemble_prob, r.home_team, r.away_team);
+    document.getElementById("r-ens").innerHTML = probHTML(r.raw_ensemble_prob || r.ensemble_prob, r.home_team, r.away_team);
+    document.getElementById("r-rl").innerHTML = probHTML(r.ensemble_prob, r.home_team, r.away_team);
+
+    // Show RL adjustment info
+    const rlInfo = document.getElementById("rl-info");
+    if (r.rl_adjustment && r.rl_adjustment !== 0) {
+      rlInfo.style.display = "block";
+      const adjSign = r.rl_adjustment > 0 ? "+" : "";
+      document.getElementById("rl-adj-text").textContent =
+        `Adjustment: ${adjSign}${(r.rl_adjustment * 100).toFixed(2)}% | ${r.rl_rules_matched} pattern(s) matched | Raw ensemble: ${(r.raw_ensemble_prob * 100).toFixed(1)}% → Adjusted: ${(r.ensemble_prob * 100).toFixed(1)}%`;
+      let rulesHtml = "";
+      if (r.rl_rules && r.rl_rules.length > 0) {
+        rulesHtml = r.rl_rules.map(rule =>
+          `<span style="display:inline-block;background:#1a3a1a;padding:2px 8px;border-radius:4px;margin:2px;">${rule.pattern}: ${rule.correction > 0 ? '+' : ''}${(rule.correction * 100).toFixed(2)}%</span>`
+        ).join(" ");
+      }
+      document.getElementById("rl-rules-list").innerHTML = rulesHtml;
+    } else {
+      rlInfo.style.display = "none";
+    }
 
     // Features table
     const tbody = document.getElementById("r-features");
