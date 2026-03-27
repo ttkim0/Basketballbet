@@ -1,0 +1,29 @@
+[
+  {
+    "iteration": 0,
+    "accuracy": 0.6890517080455478,
+    "log_loss": 0.588999928633632,
+    "auc_roc": 0.7422814634544672,
+    "brier": 0.20192499653210752,
+    "n_games": 21428,
+    "n_correction_features": 0
+  },
+  {
+    "iteration": 1,
+    "accuracy": 0.7030987492999813,
+    "log_loss": 0.5908951239297694,
+    "auc_roc": 0.7412141454108584,
+    "brier": 0.20032397256486842,
+    "n_games": 21428,
+    "n_correction_features": 10
+  },
+  {
+    "iteration": 2,
+    "accuracy": 0.6937184991599776,
+    "log_loss": 0.5918014868919951,
+    "auc_roc": 0.7390527850129673,
+    "brier": 0.2020063816371103,
+    "n_games": 21428,
+    "n_correction_features": 18
+  }
+]
