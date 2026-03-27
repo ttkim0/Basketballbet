@@ -63,7 +63,7 @@ def load_rl_adjustments():
 def apply_rl_adjustment(ensemble_prob, feat_values):
     """Apply RL corrections to ensemble probability based on game context."""
     if not RL_ADJUSTMENTS:
-        return ensemble_prob
+        return ensemble_prob, 0.0, []
 
     # Build a fake row for categorize_game
     row = {
@@ -333,13 +333,19 @@ def api_predict():
 # NBA CDN Proxy (avoids CORS issues in the browser)
 # ============================================================
 def _fetch_nba_url(url):
-    """Server-side fetch from NBA CDN."""
-    req = urllib.request.Request(url, headers={
+    """Server-side fetch from NBA CDN, bypassing any corporate/cloud proxy."""
+    import urllib.request as ur2
+
+    # Build a handler that does NOT use any proxy (bypass cloud egress restrictions)
+    no_proxy_handler = ur2.ProxyHandler({})
+    opener = ur2.build_opener(no_proxy_handler)
+
+    req = ur2.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         "Accept": "application/json",
         "Referer": "https://www.nba.com/",
     })
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with opener.open(req, timeout=15) as resp:
         return resp.read()
 
 
@@ -660,13 +666,44 @@ HTML_TEMPLATE = r"""
 </div>
 
 <script>
-// Use our Flask proxy to avoid CORS issues with NBA CDN
-const NBA_SCOREBOARD_URL = "/api/nba/scoreboard";
-const NBA_BOXSCORE_URL = "/api/nba/boxscore/{GAME_ID}";
+// Multiple fetch strategies to get NBA data (tries in order until one works)
+const NBA_CDN_SCOREBOARD = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json";
+const NBA_CDN_BOXSCORE = "https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{GAME_ID}.json";
 
 let todaysGames = [];
 let selectedGameId = null;
 let selectedBoxScore = null;
+
+// Try multiple methods to fetch NBA data (handles CORS/proxy issues)
+async function fetchNBA(cdnUrl) {
+  // Method 1: Our Flask server proxy (works when server has internet)
+  const proxyPath = cdnUrl.includes("scoreboard") ? "/api/nba/scoreboard"
+    : "/api/nba/boxscore/" + cdnUrl.match(/boxscore_(\d+)/)?.[1];
+  try {
+    const r1 = await fetch(proxyPath);
+    if (r1.ok) { const d = await r1.json(); if (!d.error) return d; }
+  } catch(e) { console.log("Proxy failed:", e); }
+
+  // Method 2: Direct fetch (works on local machine, no CORS issue)
+  try {
+    const r2 = await fetch(cdnUrl);
+    if (r2.ok) return await r2.json();
+  } catch(e) { console.log("Direct fetch failed:", e); }
+
+  // Method 3: CORS proxy fallback (public service)
+  const corsProxies = [
+    "https://corsproxy.io/?" + encodeURIComponent(cdnUrl),
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(cdnUrl),
+  ];
+  for (const proxyUrl of corsProxies) {
+    try {
+      const r3 = await fetch(proxyUrl);
+      if (r3.ok) return await r3.json();
+    } catch(e) { console.log("CORS proxy failed:", proxyUrl, e); }
+  }
+
+  throw new Error("All fetch methods failed");
+}
 
 // Feature display names
 const FEAT_LABELS = {
@@ -689,9 +726,7 @@ const FEAT_LABELS = {
 // Fetch today's live games
 async function fetchLiveGames() {
   try {
-    const resp = await fetch(NBA_SCOREBOARD_URL);
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const data = await resp.json();
+    const data = await fetchNBA(NBA_CDN_SCOREBOARD);
     todaysGames = data.scoreboard.games;
 
     document.getElementById("live-loading").style.display = "none";
@@ -747,11 +782,8 @@ async function selectLiveGame(game) {
 
   // Fetch box score
   try {
-    const url = NBA_BOXSCORE_URL.replace("{GAME_ID}", game.gameId);
-    const resp = await fetch(url);
-    if (resp.ok) {
-      selectedBoxScore = await resp.json();
-    }
+    const url = NBA_CDN_BOXSCORE.replace("{GAME_ID}", game.gameId);
+    selectedBoxScore = await fetchNBA(url);
   } catch (e) {
     console.error("Failed to fetch box score:", e);
   }
