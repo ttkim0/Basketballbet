@@ -958,6 +958,35 @@ def compute_advanced_features(df):
     return df
 
 
+def compute_team_quality_features(df):
+    """
+    Compute differentials for team-season quality metrics from sumitrodatta data.
+    These are season-level stats (SRS, team ORtg/DRtg, BPM, WS/48, VORP).
+    """
+    print("Computing team quality differentials...")
+
+    quality_pairs = [
+        ('home_srs', 'vis_srs', 'srs_diff'),
+        ('home_team_ortg', 'vis_team_ortg', 'team_ortg_diff'),
+        ('home_team_drtg', 'vis_team_drtg', 'team_drtg_diff'),
+        ('home_team_nrtg', 'vis_team_nrtg', 'team_nrtg_diff'),
+        ('home_team_pace', 'vis_team_pace', 'team_pace_diff'),
+        ('home_team_bpm', 'vis_team_bpm', 'team_bpm_diff'),
+        ('home_team_ws48', 'vis_team_ws48', 'team_ws48_diff'),
+        ('home_team_vorp', 'vis_team_vorp', 'team_vorp_diff'),
+        ('home_team_per', 'vis_team_per', 'team_per_diff'),
+    ]
+
+    n_added = 0
+    for home_col, vis_col, diff_col in quality_pairs:
+        if home_col in df.columns and vis_col in df.columns:
+            df[diff_col] = df[home_col] - df[vis_col]
+            n_added += 1
+
+    print(f"  Added {n_added} team quality differential features")
+    return df
+
+
 def compute_all_features(df):
     """Run the complete feature engineering pipeline."""
     print("=" * 70)
@@ -986,6 +1015,7 @@ def compute_all_features(df):
     df = compute_odds_features(df)
     df = compute_raptor_features(df)
     df = compute_advanced_features(df)
+    df = compute_team_quality_features(df)
 
     print(f"\n{'=' * 70}")
     print(f"FEATURE ENGINEERING COMPLETE")

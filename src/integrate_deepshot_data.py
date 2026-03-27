@@ -453,6 +453,95 @@ def build_expanded_raptor():
 
 
 # ============================================================
+# Step 2b: Build team quality from sumitrodatta BBRef data
+# ============================================================
+def build_team_quality_metrics():
+    """
+    Build team-season quality metrics from sumitrodatta BBRef datasets:
+    - Team Summaries: SRS, ORtg, DRtg, NRtg, Pace (season-level)
+    - Player Advanced: BPM, WS/48, VORP aggregated to team (as RAPTOR proxy for 2023+)
+    """
+    print("\n" + "=" * 70)
+    print("STEP 2b: BUILD TEAM QUALITY FROM SUMITRODATTA DATA")
+    print("=" * 70)
+
+    sumit_dir = os.path.join(DATA_DIR, "sumitrodatta")
+
+    # --- Team Summaries (SRS, ORtg, DRtg, NRtg, Pace) ---
+    ts_path = os.path.join(sumit_dir, "Team Summaries.csv")
+    team_quality = {}
+    if os.path.exists(ts_path):
+        ts = pd.read_csv(ts_path)
+        ts = ts[(ts['season'] >= 2004) & (ts['abbreviation'].notna())].copy()
+        ts['team_id'] = ts['abbreviation'].apply(lambda x: TRICODE_MAP.get(x, x))
+
+        for _, row in ts.iterrows():
+            team_quality[(row['team_id'], int(row['season']))] = {
+                'srs': row.get('srs', np.nan),
+                'team_ortg': row.get('o_rtg', np.nan),
+                'team_drtg': row.get('d_rtg', np.nan),
+                'team_nrtg': row.get('n_rtg', np.nan),
+                'team_pace': row.get('pace', np.nan),
+                'team_mov': row.get('mov', np.nan),
+                'team_efg': row.get('e_fg_percent', np.nan),
+                'team_tov_pct': row.get('tov_percent', np.nan),
+                'team_orb_pct': row.get('orb_percent', np.nan),
+            }
+        print(f"  Team Summaries: {len(team_quality)} team-seasons")
+    else:
+        print(f"  WARNING: {ts_path} not found")
+
+    # --- Player Advanced (BPM, WS/48, VORP → team aggregates) ---
+    adv_path = os.path.join(sumit_dir, "Advanced.csv")
+    team_player_quality = {}
+    if os.path.exists(adv_path):
+        adv = pd.read_csv(adv_path)
+        adv = adv[(adv['season'] >= 2004) & (adv['team'].notna())].copy()
+        # Remove "TOT" rows (player traded mid-season total)
+        adv = adv[adv['team'] != 'TOT']
+        adv['team_id'] = adv['team'].apply(lambda x: TRICODE_MAP.get(x, x))
+
+        for col in ['mp', 'bpm', 'obpm', 'dbpm', 'ws_48', 'vorp', 'per']:
+            adv[col] = pd.to_numeric(adv[col], errors='coerce')
+        adv = adv.dropna(subset=['mp', 'bpm'])
+        adv = adv[adv['mp'] > 0]
+
+        for (team, year), group in adv.groupby(['team_id', 'season']):
+            weights = group['mp'].values
+            total_mp = weights.sum()
+            if total_mp > 0:
+                team_player_quality[(team, int(year))] = {
+                    'team_bpm': np.average(group['bpm'].values, weights=weights),
+                    'team_obpm': np.average(group['obpm'].values, weights=weights),
+                    'team_dbpm': np.average(group['dbpm'].values, weights=weights),
+                    'team_ws48': np.average(group['ws_48'].fillna(0).values, weights=weights),
+                    'team_vorp': group['vorp'].sum(),
+                    'team_per': np.average(group['per'].fillna(15).values, weights=weights),
+                }
+        print(f"  Player Advanced aggregates: {len(team_player_quality)} team-seasons")
+    else:
+        print(f"  WARNING: {adv_path} not found")
+
+    # Combine into single DataFrame
+    rows = []
+    all_keys = set(team_quality.keys()) | set(team_player_quality.keys())
+    for key in all_keys:
+        team, season = key
+        row = {'team_id': team, 'season': season}
+        if key in team_quality:
+            row.update(team_quality[key])
+        if key in team_player_quality:
+            row.update(team_player_quality[key])
+        rows.append(row)
+
+    quality_df = pd.DataFrame(rows).sort_values(['season', 'team_id']).reset_index(drop=True)
+    print(f"  Total team-season quality rows: {len(quality_df)}")
+    print(f"  Season range: {quality_df['season'].min()}-{quality_df['season'].max()}")
+
+    return quality_df
+
+
+# ============================================================
 # Step 3: Load and clean odds data
 # ============================================================
 def load_odds():
@@ -475,10 +564,10 @@ def load_odds():
 # ============================================================
 # Step 4: Merge everything into enriched games
 # ============================================================
-def merge_all(games, raptor, odds):
-    """Merge RAPTOR and odds into the games dataset."""
+def merge_all(games, raptor, odds, team_quality=None):
+    """Merge RAPTOR, team quality, and odds into the games dataset."""
     print("\n" + "=" * 70)
-    print("STEP 4: MERGE ALL DATA")
+    print("STEP 5: MERGE ALL DATA")
     print("=" * 70)
     print(f"  Input games: {len(games)}")
 
@@ -510,6 +599,48 @@ def merge_all(games, raptor, odds):
 
         raptor_matched = games['home_raptor_total'].notna().sum()
         print(f"  RAPTOR matched: {raptor_matched}/{len(games)} ({100*raptor_matched/len(games):.1f}%)")
+
+    # Merge team quality metrics (by team-season)
+    if team_quality is not None and len(team_quality) > 0:
+        tq_cols = [c for c in team_quality.columns if c not in ['team_id', 'season']]
+
+        # Home team
+        home_rename = {c: f'home_{c}' for c in tq_cols}
+        games = games.merge(
+            team_quality.rename(columns=home_rename),
+            left_on=['home_team_id', 'season'],
+            right_on=['team_id', 'season'],
+            how='left'
+        ).drop(columns=['team_id'], errors='ignore')
+
+        # Visitor team
+        vis_rename = {c: f'vis_{c}' for c in tq_cols}
+        games = games.merge(
+            team_quality.rename(columns=vis_rename),
+            left_on=['visitor_team_id', 'season'],
+            right_on=['team_id', 'season'],
+            how='left'
+        ).drop(columns=['team_id'], errors='ignore')
+
+        tq_matched = games[f'home_srs'].notna().sum() if 'home_srs' in games.columns else 0
+        print(f"  Team quality matched: {tq_matched}/{len(games)} ({100*tq_matched/len(games):.1f}%)")
+
+        # Fill RAPTOR gaps with BPM (for seasons 2023-2026 where RAPTOR isn't available)
+        if 'home_raptor_total' in games.columns and 'home_team_bpm' in games.columns:
+            missing_raptor = games['home_raptor_total'].isna()
+            has_bpm = games['home_team_bpm'].notna()
+            fill_mask = missing_raptor & has_bpm
+            if fill_mask.sum() > 0:
+                games.loc[fill_mask, 'home_raptor_total'] = games.loc[fill_mask, 'home_team_bpm']
+                games.loc[fill_mask, 'home_raptor_off'] = games.loc[fill_mask, 'home_team_obpm']
+                games.loc[fill_mask, 'home_raptor_def'] = games.loc[fill_mask, 'home_team_dbpm']
+                games.loc[fill_mask, 'home_war'] = games.loc[fill_mask, 'home_team_vorp']
+
+                games.loc[fill_mask, 'vis_raptor_total'] = games.loc[fill_mask, 'vis_team_bpm']
+                games.loc[fill_mask, 'vis_raptor_off'] = games.loc[fill_mask, 'vis_team_obpm']
+                games.loc[fill_mask, 'vis_raptor_def'] = games.loc[fill_mask, 'vis_team_dbpm']
+                games.loc[fill_mask, 'vis_war'] = games.loc[fill_mask, 'vis_team_vorp']
+                print(f"  Filled {fill_mask.sum()} RAPTOR gaps with BPM proxy")
 
     # Merge odds (by date + home team)
     if odds is not None and len(odds) > 0:
@@ -545,11 +676,14 @@ def run_full_integration():
     # Step 2: Build expanded RAPTOR
     raptor = build_expanded_raptor()
 
+    # Step 2b: Build team quality from sumitrodatta data
+    team_quality = build_team_quality_metrics()
+
     # Step 3: Load odds
     odds = load_odds()
 
     # Step 4: Merge everything
-    games = merge_all(games, raptor, odds)
+    games = merge_all(games, raptor, odds, team_quality)
 
     # Save
     out_path = os.path.join(PROCESSED_DIR, "games_enriched_v2.csv")
@@ -566,7 +700,8 @@ def run_full_integration():
 
     # Check coverage of key columns
     key_cols = ['home_efg_pct', 'home_ortg', 'home_drtg', 'home_pace', 'home_tov_pct',
-                'home_orb_pct', 'home_ts_pct', 'spread', 'home_raptor_total']
+                'home_orb_pct', 'home_ts_pct', 'spread', 'home_raptor_total',
+                'home_srs', 'home_team_bpm', 'home_team_vorp']
     print("\n  Column coverage:")
     for col in key_cols:
         if col in games.columns:

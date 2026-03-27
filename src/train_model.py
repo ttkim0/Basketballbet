@@ -114,8 +114,13 @@ FEATURE_COLUMNS = [
     # Tier 8: Betting odds / market features
     "spread", "spread_abs", "market_prob_diff", "expected_total",
 
-    # Tier 9: RAPTOR player quality features
+    # Tier 9: RAPTOR player quality features (+ BPM proxy for 2023+)
     "raptor_total_diff", "raptor_off_diff", "raptor_def_diff", "war_diff",
+
+    # Tier 10: Team season-level quality (from sumitrodatta BBRef data)
+    "srs_diff", "team_ortg_diff", "team_drtg_diff", "team_nrtg_diff",
+    "team_pace_diff", "team_bpm_diff", "team_ws48_diff", "team_vorp_diff",
+    "team_per_diff",
 ]
 
 TARGET = "home_win"
@@ -143,17 +148,20 @@ def prepare_data(df):
 
 def compute_sample_weights(df):
     """
-    Compute sample weights that emphasize more recent seasons.
-    Rationale: NBA play style evolves, so recent seasons are more predictive.
-    Uses exponential decay: weight = base^(season_rank), where most recent = 1.0
+    Compute sample weights that HEAVILY emphasize recent games.
+    Recent seasons (2024-2026) get much higher weight than older seasons (2003-2010).
+
+    Uses aggressive exponential decay: base 0.88 per season.
+    Result: 2026=1.0, 2025=0.88, 2024=0.77, ... 2004=0.05
+    This means a 2004 game has ~5% the weight of a 2026 game.
     """
     seasons = sorted(df["season"].unique())
     n_seasons = len(seasons)
     season_rank = {s: i for i, s in enumerate(seasons)}
 
-    # Exponential decay with base 0.97 per season
-    # Most recent season = 1.0, oldest season ~0.55 for 22 seasons
-    decay_base = 0.97
+    # Aggressive decay: base 0.88 per season
+    # Most recent = 1.0, 5 years ago ~0.53, 10 years ago ~0.28, 20 years ago ~0.07
+    decay_base = 0.88
     weights = df["season"].map(
         lambda s: decay_base ** (n_seasons - 1 - season_rank[s])
     ).values
@@ -166,17 +174,21 @@ def compute_sample_weights(df):
 def chronological_split(df, X, y, test_seasons=None):
     """
     Split data chronologically.
-    Default: train on all but last 2 seasons, validate on second-to-last, test on last.
+    Default: Use last complete season as test, second-to-last as val.
+    ALL other seasons (including current incomplete 2026) go into training
+    so the model benefits from the most recent data.
     """
     seasons = sorted(df["season"].unique())
 
     if test_seasons is None:
         # Use last COMPLETE season as test, second-to-last as val
-        # Skip incomplete current season (2026) if present
+        # Include incomplete current season (2026) in TRAINING so the model
+        # learns from the most recent games
         complete_seasons = [s for s in seasons if len(df[df["season"] == s]) >= 1100]
         if len(complete_seasons) >= 2:
             test_seasons = complete_seasons[-1:]
             val_seasons = complete_seasons[-2:-1]
+            # Train includes everything else, including incomplete 2026
             train_seasons = [s for s in seasons if s not in test_seasons and s not in val_seasons]
         else:
             test_seasons = seasons[-1:]

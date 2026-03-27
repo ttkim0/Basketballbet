@@ -1,30 +1,30 @@
 {
   "logistic_regression": {
-    "accuracy": 0.6797274275979557,
-    "log_loss": 0.6007552823539071,
-    "auc_roc": 0.7452656388901886,
-    "brier_score": 0.2063562810341269
+    "accuracy": 0.7095400340715503,
+    "log_loss": 0.5761117662709244,
+    "auc_roc": 0.7643609928414354,
+    "brier_score": 0.19623247082164597
   },
   "xgboost": {
-    "accuracy": 0.6780238500851788,
-    "log_loss": 0.6013650851991745,
-    "auc_roc": 0.7398733214803724,
-    "brier_score": 0.20681555569171906
+    "accuracy": 0.7035775127768313,
+    "log_loss": 0.5820197791120805,
+    "auc_roc": 0.7581645066205025,
+    "brier_score": 0.19867202639579773
   },
   "lightgbm": {
-    "accuracy": 0.6686541737649063,
-    "log_loss": 0.6044084083771574,
-    "auc_roc": 0.7347500350910028,
-    "brier_score": 0.20868383008091856
+    "accuracy": 0.6950596252129472,
+    "log_loss": 0.5828530338984331,
+    "auc_roc": 0.7569158517756047,
+    "brier_score": 0.19908373200378895
   },
   "ensemble": {
-    "accuracy": 0.6873935264054515,
-    "log_loss": 0.5953628652760239,
-    "auc_roc": 0.7443795910728489,
-    "brier_score": 0.204779927326115
+    "accuracy": 0.7146507666098807,
+    "log_loss": 0.5764382951093658,
+    "auc_roc": 0.7652616619098862,
+    "brier_score": 0.19568860946057623
   },
   "ensemble_method": "extended_meta",
-  "ensemble_threshold": 0.5350000000000001,
+  "ensemble_threshold": 0.52,
   "features_used": [
     "elo_rating_diff",
     "elo_diff_squared",
@@ -123,11 +123,20 @@
     "raptor_total_diff",
     "raptor_off_diff",
     "raptor_def_diff",
-    "war_diff"
+    "war_diff",
+    "srs_diff",
+    "team_ortg_diff",
+    "team_drtg_diff",
+    "team_nrtg_diff",
+    "team_pace_diff",
+    "team_bpm_diff",
+    "team_ws48_diff",
+    "team_vorp_diff",
+    "team_per_diff"
   ],
-  "n_features": 98,
+  "n_features": 107,
   "n_train": 26008,
   "n_val": 1319,
   "n_test": 1174,
-  "trained_at": "2026-03-27T00:10:37.808252"
+  "trained_at": "2026-03-27T00:31:45.228761"
 }
