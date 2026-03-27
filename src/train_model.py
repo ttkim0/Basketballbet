@@ -104,6 +104,13 @@ FEATURE_COLUMNS = [
     "last5_three_pct_diff_real", "last10_three_pct_diff_real",
     "last5_tov_rate_diff", "last10_tov_rate_diff",
 
+    # Tier 7b: Real per-game advanced stats rolling (ORtg, DRtg, Pace, TOV%, ORB%)
+    "last5_ortg_diff_real", "last10_ortg_diff_real",
+    "last5_drtg_diff_real", "last10_drtg_diff_real",
+    "last5_pace_diff_real", "last10_pace_diff_real",
+    "last5_tov_pct_diff_real", "last10_tov_pct_diff_real",
+    "last5_orb_pct_diff_real", "last10_orb_pct_diff_real",
+
     # Tier 8: Betting odds / market features
     "spread", "spread_abs", "market_prob_diff", "expected_total",
 
@@ -164,9 +171,17 @@ def chronological_split(df, X, y, test_seasons=None):
     seasons = sorted(df["season"].unique())
 
     if test_seasons is None:
-        test_seasons = seasons[-1:]
-        val_seasons = seasons[-2:-1]
-        train_seasons = seasons[:-2]
+        # Use last COMPLETE season as test, second-to-last as val
+        # Skip incomplete current season (2026) if present
+        complete_seasons = [s for s in seasons if len(df[df["season"] == s]) >= 1100]
+        if len(complete_seasons) >= 2:
+            test_seasons = complete_seasons[-1:]
+            val_seasons = complete_seasons[-2:-1]
+            train_seasons = [s for s in seasons if s not in test_seasons and s not in val_seasons]
+        else:
+            test_seasons = seasons[-1:]
+            val_seasons = seasons[-2:-1]
+            train_seasons = seasons[:-2]
     else:
         val_seasons = [s for s in seasons if s not in test_seasons and s == max(s2 for s2 in seasons if s2 not in test_seasons)]
         train_seasons = [s for s in seasons if s not in test_seasons and s not in val_seasons]

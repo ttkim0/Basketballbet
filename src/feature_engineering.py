@@ -667,11 +667,13 @@ def compute_real_boxscore_rolling(df, windows=[5, 10]):
     box_cols_home = ['home_efg_pct', 'home_ts_pct', 'home_fg_pct', 'home_three_pct',
                      'home_ft_pct', 'home_oreb', 'home_dreb', 'home_reb',
                      'home_ast', 'home_stl', 'home_blk', 'home_tov', 'home_pf',
-                     'home_fga', 'home_fta', 'home_fg3a']
+                     'home_fga', 'home_fta', 'home_fg3a',
+                     'home_ortg', 'home_drtg', 'home_pace', 'home_tov_pct', 'home_orb_pct']
     box_cols_vis = ['vis_efg_pct', 'vis_ts_pct', 'vis_fg_pct', 'vis_three_pct',
                     'vis_ft_pct', 'vis_oreb', 'vis_dreb', 'vis_reb',
                     'vis_ast', 'vis_stl', 'vis_blk', 'vis_tov', 'vis_pf',
-                    'vis_fga', 'vis_fta', 'vis_fg3a']
+                    'vis_fga', 'vis_fta', 'vis_fg3a',
+                    'vis_ortg', 'vis_drtg', 'vis_pace', 'vis_tov_pct', 'vis_orb_pct']
 
     has_box = any(c in df.columns for c in box_cols_home)
     if not has_box:
@@ -681,7 +683,8 @@ def compute_real_boxscore_rolling(df, windows=[5, 10]):
     # Stats to track per team per game
     tracked_stats = ['efg_pct', 'ts_pct', 'fg_pct', 'three_pct', 'ft_pct',
                      'oreb', 'dreb', 'reb', 'ast', 'stl', 'blk', 'tov',
-                     'fga', 'fta', 'fg3a']
+                     'fga', 'fta', 'fg3a',
+                     'ortg', 'drtg', 'pace', 'tov_pct', 'orb_pct']
 
     # Track per-team game history with real box stats
     team_box_history = {}
@@ -730,7 +733,8 @@ def compute_real_boxscore_rolling(df, windows=[5, 10]):
     # Compute differentials for key stats
     for w in windows:
         for stat in ['efg_pct', 'ts_pct', 'tov', 'reb', 'ast', 'stl', 'blk',
-                     'oreb', 'dreb', 'three_pct']:
+                     'oreb', 'dreb', 'three_pct',
+                     'ortg', 'drtg', 'pace', 'tov_pct', 'orb_pct']:
             h = f"last{w}_{stat}_home_real"
             v = f"last{w}_{stat}_visitor_real"
             if h in df.columns and v in df.columns:
@@ -963,6 +967,12 @@ def compute_all_features(df):
 
     # Add home indicator
     df["home_flag"] = 1
+
+    # Ensure required columns exist
+    if "margin" not in df.columns:
+        df["margin"] = df["home_pts"] - df["visitor_pts"]
+    if "home_win" not in df.columns:
+        df["home_win"] = (df["home_pts"] > df["visitor_pts"]).astype(int)
 
     df = compute_schedule_features(df)
     df = compute_rolling_form_features(df, windows=[3, 5, 10])
