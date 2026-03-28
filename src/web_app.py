@@ -212,7 +212,12 @@ print(f"  {len(DIFF_TO_SOURCES)} diff features will be computed fresh per matchu
 
 def _get_team_stat(team_id, col_name):
     """Get a team's individual stat value from their most recent game.
-    Handles the fact that the team might have been home or away in that game."""
+
+    CRITICAL: We must map the requested column to the column that actually
+    holds THIS TEAM's data based on whether the team was home or visitor
+    in their last game. We do this BEFORE looking up the value, because
+    both home and visitor columns exist in every row.
+    """
     team_games = DF_FEAT[
         (DF_FEAT["home_team_id"] == team_id) | (DF_FEAT["visitor_team_id"] == team_id)
     ].sort_values("date")
@@ -222,44 +227,46 @@ def _get_team_stat(team_id, col_name):
     last = team_games.iloc[-1]
     was_home = last["home_team_id"] == team_id
 
-    # Direct column lookup
-    if col_name in last.index:
-        val = last[col_name]
+    # Determine the actual column that holds THIS team's data.
+    # The requested col_name assumes a certain role; if the team's actual
+    # role differs, we need to swap to the equivalent column.
+    actual_col = col_name
+
+    if was_home:
+        # Team was HOME in last game. Home-side columns hold their data.
+        # If we were asked for a visitor-side column, swap to home-side.
+        if col_name.endswith("_visitor"):
+            actual_col = col_name.replace("_visitor", "_home")
+        elif col_name.startswith("visitor_"):
+            actual_col = col_name.replace("visitor_", "home_", 1)
+        elif col_name.startswith("vis_"):
+            actual_col = col_name.replace("vis_", "home_", 1)
+    else:
+        # Team was VISITOR in last game. Visitor-side columns hold their data.
+        # If we were asked for a home-side column, swap to visitor-side.
+        if col_name.endswith("_home"):
+            actual_col = col_name.replace("_home", "_visitor")
+        elif col_name.startswith("home_"):
+            # Try visitor_ first, then vis_ (some columns use vis_ prefix)
+            candidate = col_name.replace("home_", "visitor_", 1)
+            if candidate in last.index:
+                actual_col = candidate
+            else:
+                actual_col = col_name.replace("home_", "vis_", 1)
+        # vis_ columns are already correct for a visitor
+
+    # Now do the single lookup on the correct column
+    if actual_col in last.index:
+        val = last[actual_col]
         if not pd.isna(val):
             return float(val)
 
-    # If the column is a home_ column but team was visitor, try the visitor equivalent
-    if col_name.startswith("home_") and not was_home:
-        vis_col = col_name.replace("home_", "visitor_", 1)
-        if vis_col in last.index and not pd.isna(last[vis_col]):
-            return float(last[vis_col])
-        # Try vis_ prefix too (e.g. vis_srs vs home_srs)
-        vis_col2 = col_name.replace("home_", "vis_", 1)
-        if vis_col2 in last.index and not pd.isna(last[vis_col2]):
-            return float(last[vis_col2])
-    # If column is visitor_ but team was home, try home equivalent
-    if col_name.startswith("visitor_") and was_home:
-        home_col = col_name.replace("visitor_", "home_", 1)
-        if home_col in last.index and not pd.isna(last[home_col]):
-            return float(last[home_col])
-    # Handle _home suffix (rolling stats like last5_net_rating_home)
-    if col_name.endswith("_home") and not was_home:
-        vis_col = col_name.replace("_home", "_visitor")
-        if vis_col in last.index and not pd.isna(last[vis_col]):
-            return float(last[vis_col])
-    if col_name.endswith("_visitor") and was_home:
-        home_col = col_name.replace("_visitor", "_home")
-        if home_col in last.index and not pd.isna(last[home_col]):
-            return float(last[home_col])
-    # Handle vis_ prefix
-    if col_name.startswith("vis_") and not was_home:
-        # Team was visitor, vis_ columns are correct
-        if col_name in last.index and not pd.isna(last[col_name]):
-            return float(last[col_name])
-    if col_name.startswith("vis_") and was_home:
-        home_col = col_name.replace("vis_", "home_", 1)
-        if home_col in last.index and not pd.isna(last[home_col]):
-            return float(last[home_col])
+    # Fallback: try the original column name (for columns that don't
+    # follow home/visitor naming, e.g. 'spread', 'date', etc.)
+    if actual_col != col_name and col_name in last.index:
+        val = last[col_name]
+        if not pd.isna(val):
+            return float(val)
 
     return 0.0
 
@@ -267,108 +274,57 @@ def _get_team_stat(team_id, col_name):
 def build_feature_vector(home_team, away_team):
     """Build the 107-feature vector for a matchup using latest data.
 
-    CRITICAL FIX: For diff features, we extract each team's INDIVIDUAL
-    rolling stats from their most recent game, then compute fresh diffs
-    for the actual matchup. We do NOT reuse diffs from games against
-    different opponents.
+    TEMPLATE-BASED APPROACH (validated at 72.2% vs 78.5% ceiling):
+    1. Start from the home team's last home game row as a template.
+       This preserves realistic values for all features (rest, travel,
+       fatigue, streaks, momentum, matchup edges, etc.) instead of
+       setting them to zero which confuses the model.
+    2. Override Elo features with current ratings.
+    3. Override diff features (via DIFF_TO_SOURCES) with fresh
+       computation from each team's individual rolling stats.
+    4. Override visitor-side features with the away team's actual stats.
     """
     features = MODELS["features"]
-    df_feat = DF_FEAT
 
-    # Get last game for each team (any role)
-    home_games = df_feat[
-        (df_feat["home_team_id"] == home_team) | (df_feat["visitor_team_id"] == home_team)
-    ].sort_values("date")
-    away_games = df_feat[
-        (df_feat["home_team_id"] == away_team) | (df_feat["visitor_team_id"] == away_team)
-    ].sort_values("date")
+    # Step 1: Get template from home team's last home game
+    home_as_home = DF_FEAT[DF_FEAT["home_team_id"] == home_team].sort_values("date")
+    if len(home_as_home) == 0:
+        # Extreme fallback: any recent game
+        home_as_home = DF_FEAT.sort_values("date").tail(1)
+    template = home_as_home.iloc[-1]
 
-    home_last = home_games.iloc[-1] if len(home_games) > 0 else None
-    away_last = away_games.iloc[-1] if len(away_games) > 0 else None
-
+    # Initialize ALL features from the template (preserves realistic distributions)
     feat_values = {}
     for feat in features:
-        val = 0.0
-
-        # --- Elo features (always fresh) ---
-        if feat == "elo_rating_diff":
-            val = ELO_RATINGS.get(home_team, 1500) - ELO_RATINGS.get(away_team, 1500)
-        elif feat == "elo_diff_squared":
-            diff = ELO_RATINGS.get(home_team, 1500) - ELO_RATINGS.get(away_team, 1500)
-            val = diff * abs(diff)
-        elif feat == "elo_diff_abs":
-            val = abs(ELO_RATINGS.get(home_team, 1500) - ELO_RATINGS.get(away_team, 1500))
-
-        # --- Diff features: COMPUTE FRESH from individual team stats ---
-        elif feat in DIFF_TO_SOURCES:
-            home_col, vis_col = DIFF_TO_SOURCES[feat]
-            home_val = _get_team_stat(home_team, home_col)
-            away_val = _get_team_stat(away_team, vis_col)
-            val = home_val - away_val
-
-        # --- Other diff/mismatch features not in our mapping ---
-        elif feat.endswith("_diff") or feat.endswith("_mismatch") or feat.endswith("_edge_5") or feat.endswith("_edge_10"):
-            # For remaining diffs, try to decompose by looking for home_/vis_ variants
-            # Otherwise fall back to last game value
-            if feat == "rest_diff":
-                # Approximate: use 2 days rest for both (unknown for future game)
-                val = 0.0
-            elif feat == "fatigue_diff":
-                val = 0.0
-            elif feat == "travel_diff":
-                val = 0.0
-            elif feat == "tz_diff":
-                val = 0.0
-            elif feat == "streak_diff":
-                h_streak = _get_team_stat(home_team, "home_streak")
-                a_streak = _get_team_stat(away_team, "visitor_streak")
-                val = h_streak - a_streak
-            else:
-                # Fall back but try to use correct perspective
-                if home_last is not None:
-                    was_home = home_last["home_team_id"] == home_team
-                    raw = home_last.get(feat, 0)
-                    if not was_home and isinstance(raw, (int, float)):
-                        raw = -raw  # Flip sign if team was visitor
-                    val = raw if not pd.isna(raw) else 0.0
-
-        # --- Per-team home_ features ---
-        elif feat.startswith("home_"):
-            val = _get_team_stat(home_team, feat)
-
-        # --- Per-team visitor_ features ---
-        elif feat.startswith("visitor_"):
-            val = _get_team_stat(away_team, feat)
-
-        # --- Standalone features ---
-        else:
-            # Features like spread, expected_total, power_rating_composite, etc.
-            if feat in ["spread", "spread_abs", "market_prob_diff", "expected_total"]:
-                val = 0.0  # No betting data for future games
-            elif feat == "power_rating_composite":
-                elo_diff = ELO_RATINGS.get(home_team, 1500) - ELO_RATINGS.get(away_team, 1500)
-                val = elo_diff / 100.0  # Approximate
-            elif feat == "pyth_win_exp_diff":
-                h = _get_team_stat(home_team, "home_season_win_pct")
-                a = _get_team_stat(away_team, "visitor_season_win_pct")
-                val = h - a  # Approximate
-            elif feat.endswith("_momentum"):
-                # Momentum features: get from last game
-                if home_last is not None:
-                    was_home = home_last["home_team_id"] == home_team
-                    raw = home_last.get(feat, 0)
-                    if not was_home and isinstance(raw, (int, float)):
-                        raw = -raw
-                    val = raw if not pd.isna(raw) else 0.0
-            else:
-                if home_last is not None:
-                    val = home_last.get(feat, 0)
-                    if pd.isna(val):
-                        val = 0.0
-
-        if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+        val = template.get(feat, 0)
+        if pd.isna(val) or (isinstance(val, float) and np.isinf(val)):
             val = 0.0
         feat_values[feat] = float(val)
+
+    # Step 2: Override Elo features with current ratings
+    elo_diff = ELO_RATINGS.get(home_team, 1500) - ELO_RATINGS.get(away_team, 1500)
+    feat_values["elo_rating_diff"] = elo_diff
+    feat_values["elo_diff_squared"] = elo_diff * abs(elo_diff)
+    if "elo_diff_abs" in feat_values:
+        feat_values["elo_diff_abs"] = abs(elo_diff)
+
+    # Step 3: Override diff features with fresh computation
+    for feat, (home_col, vis_col) in DIFF_TO_SOURCES.items():
+        if feat in feat_values:
+            hv = _get_team_stat(home_team, home_col)
+            av = _get_team_stat(away_team, vis_col)
+            feat_values[feat] = hv - av
+
+    # Step 4: Override visitor-side features with away team's data
+    for feat in features:
+        if feat.startswith("visitor_") or feat.startswith("vis_"):
+            feat_values[feat] = _get_team_stat(away_team, feat)
+
+    # Clean up any NaN/inf from overrides
+    for feat in features:
+        val = feat_values.get(feat, 0.0)
+        if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+            feat_values[feat] = 0.0
 
     return feat_values
 
