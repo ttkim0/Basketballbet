@@ -121,6 +121,15 @@ FEATURE_COLUMNS = [
     "srs_diff", "team_ortg_diff", "team_drtg_diff", "team_nrtg_diff",
     "team_pace_diff", "team_bpm_diff", "team_ws48_diff", "team_vorp_diff",
     "team_per_diff",
+
+    # Tier 11: Recency-adjusted features (prevent stale season stats from dominating)
+    "form_divergence_home", "form_divergence_visitor", "form_divergence_diff",
+    "srs_blended_diff",
+    "ortg_blended_diff", "drtg_blended_diff",
+    "streak_severity_home", "streak_severity_visitor", "streak_severity_diff",
+    "home_collapsing", "home_surging",
+    "visitor_collapsing", "visitor_surging",
+    "recent_dominance_home", "recent_dominance_visitor", "recent_dominance_diff",
 ]
 
 TARGET = "home_win"

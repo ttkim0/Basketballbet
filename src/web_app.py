@@ -196,6 +196,7 @@ MODELS = {
     "lr": joblib.load(os.path.join(MODEL_DIR, "logistic_regression.pkl")),
     "scaler": joblib.load(os.path.join(MODEL_DIR, "scaler.pkl")),
     "features": joblib.load(os.path.join(MODEL_DIR, "feature_list.pkl")),
+    "meta": joblib.load(os.path.join(MODEL_DIR, "ensemble_meta.pkl")),
     "ext_meta": joblib.load(os.path.join(MODEL_DIR, "ensemble_ext_meta.pkl")),
     "config": joblib.load(os.path.join(MODEL_DIR, "ensemble_config.pkl")),
 }
@@ -393,6 +394,10 @@ def build_feature_vector(home_team, away_team):
         if feat.startswith("visitor_") or feat.startswith("vis_"):
             feat_values[feat] = _get_team_stat(away_team, feat)
 
+    # Step 5: Compute recency-adjusted derived features from fresh data
+    # These prevent stale season stats from dominating when a team is collapsing/surging
+    _compute_recency_features(feat_values, home_team, away_team)
+
     # Clean up any NaN/inf from overrides
     for feat in features:
         val = feat_values.get(feat, 0.0)
@@ -400,6 +405,68 @@ def build_feature_vector(home_team, away_team):
             feat_values[feat] = 0.0
 
     return feat_values
+
+
+def _compute_recency_features(fv, home_team, away_team):
+    """Compute recency-adjusted features from fresh per-team data.
+
+    These features flag when season stats are stale relative to recent form,
+    so the model can properly discount them for collapsing/surging teams.
+    """
+    # Get per-team rolling and season stats
+    h_l10_nr = _get_team_stat(home_team, "last10_net_rating_home")
+    v_l10_nr = _get_team_stat(away_team, "last10_net_rating_visitor")
+    h_season_nrtg = _get_team_stat(home_team, "home_team_nrtg")
+    v_season_nrtg = _get_team_stat(away_team, "vis_team_nrtg")
+    h_srs = _get_team_stat(home_team, "home_srs")
+    v_srs = _get_team_stat(away_team, "vis_srs")
+    h_l10_wr = _get_team_stat(home_team, "last10_win_rate_home")
+    v_l10_wr = _get_team_stat(away_team, "last10_win_rate_visitor")
+    h_l10_mg = _get_team_stat(home_team, "last10_avg_margin_home")
+    v_l10_mg = _get_team_stat(away_team, "last10_avg_margin_visitor")
+    h_streak = fv.get("home_streak", 0)
+    v_streak = fv.get("visitor_streak", 0)
+
+    # Form divergence: recent form minus season average
+    h_div = h_l10_nr - h_season_nrtg
+    v_div = v_l10_nr - v_season_nrtg
+    fv["form_divergence_home"] = h_div
+    fv["form_divergence_visitor"] = v_div
+    fv["form_divergence_diff"] = h_div - v_div
+
+    # Recency-blended SRS (50% season + 50% recent)
+    h_srs_blend = 0.5 * h_srs + 0.5 * h_l10_nr
+    v_srs_blend = 0.5 * v_srs + 0.5 * v_l10_nr
+    fv["srs_blended_diff"] = h_srs_blend - v_srs_blend
+
+    # Recency-blended ORtg and DRtg
+    h_ortg_s = _get_team_stat(home_team, "home_team_ortg")
+    v_ortg_s = _get_team_stat(away_team, "vis_team_ortg")
+    h_drtg_s = _get_team_stat(home_team, "home_team_drtg")
+    v_drtg_s = _get_team_stat(away_team, "vis_team_drtg")
+    h_l10_or = _get_team_stat(home_team, "last10_off_rating_home")
+    v_l10_or = _get_team_stat(away_team, "last10_off_rating_visitor")
+    h_l10_dr = _get_team_stat(home_team, "last10_def_rating_home")
+    v_l10_dr = _get_team_stat(away_team, "last10_def_rating_visitor")
+
+    fv["ortg_blended_diff"] = (0.5 * h_ortg_s + 0.5 * h_l10_or) - (0.5 * v_ortg_s + 0.5 * v_l10_or)
+    fv["drtg_blended_diff"] = (0.5 * h_drtg_s + 0.5 * h_l10_dr) - (0.5 * v_drtg_s + 0.5 * v_l10_dr)
+
+    # Streak severity (non-linear: 10-game streak = 100, 3-game = 9)
+    fv["streak_severity_home"] = h_streak * abs(h_streak)
+    fv["streak_severity_visitor"] = v_streak * abs(v_streak)
+    fv["streak_severity_diff"] = fv["streak_severity_home"] - fv["streak_severity_visitor"]
+
+    # Collapse/surge binary flags
+    fv["home_collapsing"] = 1.0 if h_div < -8 else 0.0
+    fv["home_surging"] = 1.0 if h_div > 8 else 0.0
+    fv["visitor_collapsing"] = 1.0 if v_div < -8 else 0.0
+    fv["visitor_surging"] = 1.0 if v_div > 8 else 0.0
+
+    # Recent dominance: win rate * avg margin
+    fv["recent_dominance_home"] = h_l10_wr * h_l10_mg
+    fv["recent_dominance_visitor"] = v_l10_wr * v_l10_mg
+    fv["recent_dominance_diff"] = fv["recent_dominance_home"] - fv["recent_dominance_visitor"]
 
 
 def run_prediction(home_team, away_team):
@@ -417,9 +484,22 @@ def run_prediction(home_team, away_team):
     lgb_prob = float(MODELS["lgb"].predict(X)[0])
 
     base_probs = np.array([[lr_prob, xgb_prob, lgb_prob]])
-    raw_feats = X[EXT_META_RAW_FEATURES].fillna(0).values
-    meta_input = np.column_stack([base_probs, raw_feats])
-    raw_ensemble_prob = float(MODELS["ext_meta"].predict_proba(meta_input)[0, 1])
+
+    # Use the correct ensemble method based on training config
+    ens_method = MODELS["config"].get("method", "meta_learner")
+    if ens_method == "extended_meta":
+        raw_feats = X[EXT_META_RAW_FEATURES].fillna(0).values
+        meta_input = np.column_stack([base_probs, raw_feats])
+        raw_ensemble_prob = float(MODELS["ext_meta"].predict_proba(meta_input)[0, 1])
+    elif ens_method == "meta_learner":
+        raw_ensemble_prob = float(MODELS["meta"].predict_proba(base_probs)[0, 1])
+    elif ens_method == "weighted_avg":
+        weights = MODELS["config"].get("weights", {})
+        w = np.array([weights.get("logistic", 1/3), weights.get("xgboost", 1/3),
+                       weights.get("lightgbm", 1/3)])
+        raw_ensemble_prob = float(np.dot(w, [lr_prob, xgb_prob, lgb_prob]))
+    else:
+        raw_ensemble_prob = float(np.mean([lr_prob, xgb_prob, lgb_prob]))
 
     # Apply RL corrections
     ensemble_prob, rl_adjustment, rl_rules = apply_rl_adjustment(raw_ensemble_prob, feat_values)

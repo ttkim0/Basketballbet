@@ -37,6 +37,7 @@ def load_models():
     lr_model = joblib.load(os.path.join(MODEL_DIR, "logistic_regression.pkl"))
     scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.pkl"))
     features = joblib.load(os.path.join(MODEL_DIR, "feature_list.pkl"))
+    meta_model = joblib.load(os.path.join(MODEL_DIR, "ensemble_meta.pkl"))
     ext_meta_model = joblib.load(os.path.join(MODEL_DIR, "ensemble_ext_meta.pkl"))
     ensemble_config = joblib.load(os.path.join(MODEL_DIR, "ensemble_config.pkl"))
 
@@ -51,6 +52,7 @@ def load_models():
         "lgb": lgb_model,
         "scaler": scaler,
         "features": features,
+        "meta": meta_model,
         "ext_meta": ext_meta_model,
         "config": ensemble_config,
     }
@@ -177,6 +179,9 @@ def build_feature_vector(home_team, away_team, df_feat, features, elo_ratings):
         if feat.startswith("visitor_") or feat.startswith("vis_"):
             feat_values[feat] = _get_team_stat(away_team, feat, df_feat)
 
+    # Step 5: Compute recency-adjusted derived features
+    _compute_recency_features(feat_values, home_team, away_team, df_feat)
+
     # Clean NaN/inf
     for feat in features:
         val = feat_values.get(feat, 0.0)
@@ -184,6 +189,54 @@ def build_feature_vector(home_team, away_team, df_feat, features, elo_ratings):
             feat_values[feat] = 0.0
 
     return feat_values
+
+
+def _compute_recency_features(fv, home_team, away_team, df_feat):
+    """Compute recency-adjusted features to prevent stale season stats from dominating."""
+    h_l10_nr = _get_team_stat(home_team, "last10_net_rating_home", df_feat)
+    v_l10_nr = _get_team_stat(away_team, "last10_net_rating_visitor", df_feat)
+    h_nrtg = _get_team_stat(home_team, "home_team_nrtg", df_feat)
+    v_nrtg = _get_team_stat(away_team, "vis_team_nrtg", df_feat)
+    h_srs = _get_team_stat(home_team, "home_srs", df_feat)
+    v_srs = _get_team_stat(away_team, "vis_srs", df_feat)
+    h_l10_wr = _get_team_stat(home_team, "last10_win_rate_home", df_feat)
+    v_l10_wr = _get_team_stat(away_team, "last10_win_rate_visitor", df_feat)
+    h_l10_mg = _get_team_stat(home_team, "last10_avg_margin_home", df_feat)
+    v_l10_mg = _get_team_stat(away_team, "last10_avg_margin_visitor", df_feat)
+    h_streak = fv.get("home_streak", 0)
+    v_streak = fv.get("visitor_streak", 0)
+
+    h_div = h_l10_nr - h_nrtg
+    v_div = v_l10_nr - v_nrtg
+    fv["form_divergence_home"] = h_div
+    fv["form_divergence_visitor"] = v_div
+    fv["form_divergence_diff"] = h_div - v_div
+    fv["srs_blended_diff"] = (0.5 * h_srs + 0.5 * h_l10_nr) - (0.5 * v_srs + 0.5 * v_l10_nr)
+
+    h_ortg_s = _get_team_stat(home_team, "home_team_ortg", df_feat)
+    v_ortg_s = _get_team_stat(away_team, "vis_team_ortg", df_feat)
+    h_drtg_s = _get_team_stat(home_team, "home_team_drtg", df_feat)
+    v_drtg_s = _get_team_stat(away_team, "vis_team_drtg", df_feat)
+    h_l10_or = _get_team_stat(home_team, "last10_off_rating_home", df_feat)
+    v_l10_or = _get_team_stat(away_team, "last10_off_rating_visitor", df_feat)
+    h_l10_dr = _get_team_stat(home_team, "last10_def_rating_home", df_feat)
+    v_l10_dr = _get_team_stat(away_team, "last10_def_rating_visitor", df_feat)
+
+    fv["ortg_blended_diff"] = (0.5 * h_ortg_s + 0.5 * h_l10_or) - (0.5 * v_ortg_s + 0.5 * v_l10_or)
+    fv["drtg_blended_diff"] = (0.5 * h_drtg_s + 0.5 * h_l10_dr) - (0.5 * v_drtg_s + 0.5 * v_l10_dr)
+
+    fv["streak_severity_home"] = h_streak * abs(h_streak)
+    fv["streak_severity_visitor"] = v_streak * abs(v_streak)
+    fv["streak_severity_diff"] = fv["streak_severity_home"] - fv["streak_severity_visitor"]
+
+    fv["home_collapsing"] = 1.0 if h_div < -8 else 0.0
+    fv["home_surging"] = 1.0 if h_div > 8 else 0.0
+    fv["visitor_collapsing"] = 1.0 if v_div < -8 else 0.0
+    fv["visitor_surging"] = 1.0 if v_div > 8 else 0.0
+
+    fv["recent_dominance_home"] = h_l10_wr * h_l10_mg
+    fv["recent_dominance_visitor"] = v_l10_wr * v_l10_mg
+    fv["recent_dominance_diff"] = fv["recent_dominance_home"] - fv["recent_dominance_visitor"]
 
 
 def fetch_nba_scoreboard():
@@ -230,14 +283,25 @@ def predict_game(home_team, away_team, models, df_feat, elo_ratings, live_data=N
     # LightGBM
     lgb_prob = float(models["lgb"].predict(X)[0])
 
-    # Extended meta-learner ensemble
+    # Ensemble prediction (use method from training config)
     base_probs = np.array([[lr_prob, xgb_prob, lgb_prob]])
-    raw_feats = X[EXT_META_RAW_FEATURES].fillna(0).values
-    meta_input = np.column_stack([base_probs, raw_feats])
-    ensemble_prob = models["ext_meta"].predict_proba(meta_input)[0, 1]
+    ens_method = models["config"].get("method", "meta_learner")
+    if ens_method == "extended_meta":
+        raw_feats = X[EXT_META_RAW_FEATURES].fillna(0).values
+        meta_input = np.column_stack([base_probs, raw_feats])
+        ensemble_prob = models["ext_meta"].predict_proba(meta_input)[0, 1]
+    elif ens_method == "meta_learner":
+        ensemble_prob = models["meta"].predict_proba(base_probs)[0, 1]
+    elif ens_method == "weighted_avg":
+        weights = models["config"].get("weights", {})
+        w = np.array([weights.get("logistic", 1/3), weights.get("xgboost", 1/3),
+                       weights.get("lightgbm", 1/3)])
+        ensemble_prob = float(np.dot(w, [lr_prob, xgb_prob, lgb_prob]))
+    else:
+        ensemble_prob = float(np.mean([lr_prob, xgb_prob, lgb_prob]))
 
     # Apply threshold from training
-    threshold = models["config"].get("threshold", 0.52)
+    threshold = models["config"].get("threshold", 0.5)
 
     return {
         "home_team": home_team,

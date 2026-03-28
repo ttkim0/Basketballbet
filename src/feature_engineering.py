@@ -950,11 +950,93 @@ def compute_advanced_features(df):
             df["last5_avg_margin_diff"].fillna(0) - df["last10_avg_margin_diff"].fillna(0)
         ).abs()
 
+    # --- 11. Recency-adjusted season stats ---
+    # Season-level stats (SRS, ORtg, DRtg) cover the full season and go stale
+    # when a team is collapsing or surging. Blend them with recent rolling form
+    # so the model can detect when season stats no longer reflect reality.
+
+    # Form divergence: how much has last10 performance diverged from season average?
+    # Large negative = team collapsing (e.g., MEM's 10-game losing streak)
+    # Large positive = team surging
+    for side in ["home", "visitor"]:
+        l10_nr = f"last10_net_rating_{side}"
+        season_nrtg = f"{'home' if side == 'home' else 'vis'}_team_nrtg"
+        if l10_nr in df.columns and season_nrtg in df.columns:
+            df[f"form_divergence_{side}"] = (
+                df[l10_nr].fillna(0) - df[season_nrtg].fillna(0)
+            )
+
+    if "form_divergence_home" in df.columns and "form_divergence_visitor" in df.columns:
+        df["form_divergence_diff"] = df["form_divergence_home"] - df["form_divergence_visitor"]
+
+    # Recency-blended SRS: 50% season SRS + 50% last10 net rating
+    # This decays stale season stats toward recent reality
+    for side in ["home", "visitor"]:
+        srs_col = f"{'home' if side == 'home' else 'vis'}_srs"
+        l10_nr = f"last10_net_rating_{side}"
+        if srs_col in df.columns and l10_nr in df.columns:
+            df[f"srs_blended_{side}"] = (
+                0.5 * df[srs_col].fillna(0) + 0.5 * df[l10_nr].fillna(0)
+            )
+
+    if "srs_blended_home" in df.columns and "srs_blended_visitor" in df.columns:
+        df["srs_blended_diff"] = df["srs_blended_home"] - df["srs_blended_visitor"]
+
+    # Recency-blended ORtg and DRtg
+    for stat, real_stat in [("ortg", "off_rating"), ("drtg", "def_rating")]:
+        for side in ["home", "visitor"]:
+            season_col = f"{'home' if side == 'home' else 'vis'}_team_{stat}"
+            recent_col = f"last10_{real_stat}_{side}"
+            if season_col in df.columns and recent_col in df.columns:
+                df[f"{stat}_blended_{side}"] = (
+                    0.5 * df[season_col].fillna(0) + 0.5 * df[recent_col].fillna(0)
+                )
+
+    for stat in ["ortg", "drtg"]:
+        h, v = f"{stat}_blended_home", f"{stat}_blended_visitor"
+        if h in df.columns and v in df.columns:
+            df[f"{stat}_blended_diff"] = df[h] - df[v]
+
+    # Streak severity: amplifies long streaks non-linearly
+    # A 10-game losing streak is much worse than 2x a 5-game streak
+    for side in ["home", "visitor"]:
+        streak_col = f"{side}_streak"
+        if streak_col in df.columns:
+            streaks = df[streak_col].fillna(0)
+            df[f"streak_severity_{side}"] = streaks * streaks.abs()
+
+    if "streak_severity_home" in df.columns and "streak_severity_visitor" in df.columns:
+        df["streak_severity_diff"] = df["streak_severity_home"] - df["streak_severity_visitor"]
+
+    # Collapse/surge flag: binary indicator for extreme form divergence
+    if "form_divergence_home" in df.columns:
+        df["home_collapsing"] = (df["form_divergence_home"] < -8).astype(int)
+        df["home_surging"] = (df["form_divergence_home"] > 8).astype(int)
+    if "form_divergence_visitor" in df.columns:
+        df["visitor_collapsing"] = (df["form_divergence_visitor"] < -8).astype(int)
+        df["visitor_surging"] = (df["form_divergence_visitor"] > 8).astype(int)
+
+    # Recent dominance: combines winning percentage AND margin
+    # A team winning 80% of last 10 by avg +12 is very different from 80% by +2
+    for side in ["home", "visitor"]:
+        wr_col = f"last10_win_rate_{side}"
+        mg_col = f"last10_avg_margin_{side}"
+        if wr_col in df.columns and mg_col in df.columns:
+            df[f"recent_dominance_{side}"] = (
+                df[wr_col].fillna(0.5) * df[mg_col].fillna(0)
+            )
+
+    if "recent_dominance_home" in df.columns and "recent_dominance_visitor" in df.columns:
+        df["recent_dominance_diff"] = df["recent_dominance_home"] - df["recent_dominance_visitor"]
+
     n_new = sum(1 for c in df.columns if c.startswith(("elo_diff_sq", "elo_diff_abs",
                 "pyth_", "home_b2b_x", "visitor_b2b_x", "rest_x", "fatigue_",
                 "weighted_", "streak_x", "power_rating", "net_matchup",
-                "h2h_x_", "form_vol")))
-    print(f"  Added {n_new} advanced derived features")
+                "h2h_x_", "form_vol", "form_divergence", "srs_blended",
+                "ortg_blended", "drtg_blended", "streak_severity",
+                "home_collapsing", "home_surging", "visitor_collapsing",
+                "visitor_surging", "recent_dominance")))
+    print(f"  Added {n_new} advanced derived features (including recency adjustments)")
     return df
 
 

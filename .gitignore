@@ -9,3 +9,4 @@ build/
 *.log
 # Large analysis output (145MB+)
 logs/golden_combos.json
+data/processed/games_full_features.csv
