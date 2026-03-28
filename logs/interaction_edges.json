@@ -1,0 +1,77 @@
+{
+  "top_triple_override": [
+    {
+      "combo": "ortg+raptor_def+fatigue",
+      "override": 0.687,
+      "edge": 0.187,
+      "n": 700
+    },
+    {
+      "combo": "raptor_off+raptor_def+fatigue",
+      "override": 0.685,
+      "edge": 0.185,
+      "n": 745
+    },
+    {
+      "combo": "ortg+drtg+fatigue",
+      "override": 0.675,
+      "edge": 0.175,
+      "n": 673
+    },
+    {
+      "combo": "drtg+raptor_off+fatigue",
+      "override": 0.671,
+      "edge": 0.171,
+      "n": 726
+    },
+    {
+      "combo": "per+raptor_def+fatigue",
+      "override": 0.668,
+      "edge": 0.168,
+      "n": 879
+    }
+  ],
+  "top_quad_override": [
+    {
+      "combo": "fatigue+l3_net+ortg+raptor_def",
+      "override": 0.697,
+      "edge": 0.197,
+      "n": 357
+    },
+    {
+      "combo": "fatigue+per+raptor_def+raptor_off",
+      "override": 0.693,
+      "edge": 0.193,
+      "n": 646
+    },
+    {
+      "combo": "fatigue+ortg+per+raptor_def",
+      "override": 0.692,
+      "edge": 0.192,
+      "n": 621
+    },
+    {
+      "combo": "fatigue+ortg+raptor_def+raptor_off",
+      "override": 0.691,
+      "edge": 0.191,
+      "n": 687
+    }
+  ],
+  "consensus_threshold": {
+    "description": "When 15+/27 non-Elo signals disagree with Elo, the signals win 51%+",
+    "at_tiny_elo_0_50": {
+      "threshold": 15,
+      "win_rate": 0.533
+    },
+    "at_small_elo_50_100": {
+      "threshold": 17,
+      "win_rate": 0.57
+    },
+    "breakeven_point": "15/27 signals must disagree to overcome Elo"
+  },
+  "key_insight": {
+    "fatigue": "Appears in ALL top combos - fatigue is the strongest Elo override signal",
+    "raptor_def": "Defensive RAPTOR in 19/20 top quad combos",
+    "ortg": "Offensive rating + defense + fatigue = strongest triple (68.7%)"
+  }
+}
