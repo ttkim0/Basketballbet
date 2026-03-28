@@ -7,3 +7,5 @@ dist/
 build/
 .env
 *.log
+# Large analysis output (145MB+)
+logs/golden_combos.json
