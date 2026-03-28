@@ -62,136 +62,126 @@ def load_elo_ratings():
     return dict(zip(df["team"], df["elo"]))
 
 
-def get_latest_team_features(team_id, role, df_feat, features):
-    """
-    Extract the most recent feature values for a team from the full features dataset.
-    role: 'home' or 'visitor' — determines which columns to pull.
-    Returns a dict of feature_name -> value for features that start with the role prefix.
-    """
-    if role == "home":
-        mask = df_feat["home_team_id"] == team_id
+def build_diff_to_sources(df_feat):
+    """Build mapping of diff features to their (home_col, visitor_col) sources."""
+    diff_map = {}
+    cols = df_feat.columns.tolist()
+    for w in ['last3', 'last5', 'last10']:
+        for s in ['net_rating', 'off_rating', 'def_rating', 'win_rate', 'avg_margin']:
+            d, h, v = f'{w}_{s}_diff', f'{w}_{s}_home', f'{w}_{s}_visitor'
+            if all(c in cols for c in [d, h, v]):
+                diff_map[d] = (h, v)
+        for s in ['efg_pct', 'ts_pct', 'tov', 'reb', 'ast', 'stl', 'blk', 'oreb',
+                   'three_pct', 'ortg', 'drtg', 'pace', 'tov_pct', 'orb_pct']:
+            d = f'{w}_{s}_diff_real'
+            h, v = f'{w}_{s}_home_real', f'{w}_{s}_visitor_real'
+            if all(c in cols for c in [d, h, v]):
+                diff_map[d] = (h, v)
+        for s in ['tov_rate']:
+            d, h, v = f'{w}_{s}_diff', f'{w}_{s}_home', f'{w}_{s}_visitor'
+            if all(c in cols for c in [d, h, v]):
+                diff_map[d] = (h, v)
+    for s in ['srs', 'team_ortg', 'team_drtg', 'team_nrtg', 'team_pace',
+              'team_bpm', 'team_ws48', 'team_vorp', 'team_per']:
+        d, h, v = f'{s}_diff', f'home_{s}', f'vis_{s}'
+        if all(c in cols for c in [d, h, v]):
+            diff_map[d] = (h, v)
+    for s in ['raptor_total', 'raptor_off', 'raptor_def', 'war']:
+        d, h, v = f'{s}_diff', f'home_{s}', f'vis_{s}'
+        if all(c in cols for c in [d, h, v]):
+            diff_map[d] = (h, v)
+    if 'season_win_pct_diff' in cols:
+        diff_map['season_win_pct_diff'] = ('home_season_win_pct', 'visitor_season_win_pct')
+    return diff_map
+
+
+def _get_team_stat(team_id, col_name, df_feat):
+    """Get a team's stat from their most recent game, handling role swaps."""
+    team_games = df_feat[
+        (df_feat["home_team_id"] == team_id) | (df_feat["visitor_team_id"] == team_id)
+    ].sort_values("date")
+    if len(team_games) == 0:
+        return 0.0
+
+    last = team_games.iloc[-1]
+    was_home = last["home_team_id"] == team_id
+
+    actual_col = col_name
+    if was_home:
+        if col_name.endswith("_visitor"):
+            actual_col = col_name.replace("_visitor", "_home")
+        elif col_name.startswith("visitor_"):
+            actual_col = col_name.replace("visitor_", "home_", 1)
+        elif col_name.startswith("vis_"):
+            actual_col = col_name.replace("vis_", "home_", 1)
     else:
-        mask = df_feat["visitor_team_id"] == team_id
+        if col_name.endswith("_home"):
+            actual_col = col_name.replace("_home", "_visitor")
+        elif col_name.startswith("home_"):
+            candidate = col_name.replace("home_", "visitor_", 1)
+            if candidate in last.index:
+                actual_col = candidate
+            else:
+                actual_col = col_name.replace("home_", "vis_", 1)
 
-    team_rows = df_feat[mask].sort_values("date")
-    if len(team_rows) == 0:
-        return {}
-
-    last_row = team_rows.iloc[-1]
-    return {f: last_row.get(f, np.nan) for f in features}
+    if actual_col in last.index:
+        val = last[actual_col]
+        if not pd.isna(val):
+            return float(val)
+    if actual_col != col_name and col_name in last.index:
+        val = last[col_name]
+        if not pd.isna(val):
+            return float(val)
+    return 0.0
 
 
 def build_feature_vector(home_team, away_team, df_feat, features, elo_ratings):
     """
-    Build the full 107-feature vector for a home vs away matchup.
-    Uses the most recent game data for each team from our dataset.
+    Build the 107-feature vector using template-based approach.
+    1. Start from home team's last home game as template
+    2. Override Elo features with current ratings
+    3. Override diff features with fresh per-team computation
+    4. Override visitor features with away team's actual stats
     """
-    # Get the latest game row where each team played in each role
-    # For rolling stats, we use the last game the team appeared in (regardless of role)
-    # because rolling stats are computed per-team across all games
+    diff_map = build_diff_to_sources(df_feat)
 
-    home_last = df_feat[
-        (df_feat["home_team_id"] == home_team) | (df_feat["visitor_team_id"] == home_team)
-    ].sort_values("date").iloc[-1] if len(df_feat[
-        (df_feat["home_team_id"] == home_team) | (df_feat["visitor_team_id"] == home_team)
-    ]) > 0 else None
-
-    away_last = df_feat[
-        (df_feat["home_team_id"] == away_team) | (df_feat["visitor_team_id"] == away_team)
-    ].sort_values("date").iloc[-1] if len(df_feat[
-        (df_feat["home_team_id"] == away_team) | (df_feat["visitor_team_id"] == away_team)
-    ]) > 0 else None
-
-    # Also get last game where each team was specifically home or away
+    # Step 1: Template from home team's last home game
     home_as_home = df_feat[df_feat["home_team_id"] == home_team].sort_values("date")
-    home_as_away = df_feat[df_feat["visitor_team_id"] == home_team].sort_values("date")
-    away_as_home = df_feat[df_feat["home_team_id"] == away_team].sort_values("date")
-    away_as_away = df_feat[df_feat["visitor_team_id"] == away_team].sort_values("date")
+    if len(home_as_home) == 0:
+        home_as_home = df_feat.sort_values("date").tail(1)
+    template = home_as_home.iloc[-1]
 
     feat_values = {}
-
     for feat in features:
-        val = 0.0
-
-        # --- Elo features ---
-        if feat == "elo_rating_diff":
-            val = elo_ratings.get(home_team, 1500) - elo_ratings.get(away_team, 1500)
-        elif feat == "elo_diff_squared":
-            diff = elo_ratings.get(home_team, 1500) - elo_ratings.get(away_team, 1500)
-            val = diff * abs(diff)
-        elif feat == "elo_diff_abs":
-            val = abs(elo_ratings.get(home_team, 1500) - elo_ratings.get(away_team, 1500))
-
-        # --- Diff features: home_X - visitor_X pattern ---
-        elif feat.endswith("_diff") or feat.endswith("_mismatch") or feat.endswith("_edge_5") or feat.endswith("_edge_10"):
-            # Try to get from last home-as-home row and away-as-away row
-            home_val = np.nan
-            away_val = np.nan
-
-            if len(home_as_home) > 0:
-                home_val = home_as_home.iloc[-1].get(feat, np.nan)
-            if home_val is np.nan or (isinstance(home_val, float) and np.isnan(home_val)):
-                # Try from the last game regardless of role
-                if home_last is not None:
-                    if home_last.get("home_team_id") == home_team:
-                        home_val = home_last.get(feat, 0)
-                    else:
-                        # Team was away, so the diff is flipped
-                        home_val = -home_last.get(feat, 0) if feat in home_last.index else 0
-
-            if len(away_as_away) > 0:
-                # When team was away, the diff features are from the away perspective already
-                away_val = away_as_away.iloc[-1].get(feat, np.nan)
-            if away_val is np.nan or (isinstance(away_val, float) and np.isnan(away_val)):
-                if away_last is not None:
-                    if away_last.get("visitor_team_id") == away_team:
-                        away_val = away_last.get(feat, 0)
-                    else:
-                        away_val = -away_last.get(feat, 0) if feat in away_last.index else 0
-
-            # For diff features, the value IS the diff already (home - visitor perspective)
-            # We just use the last value from when this team was home
-            if len(home_as_home) > 0:
-                val = home_as_home.iloc[-1].get(feat, 0)
-            elif home_last is not None:
-                val = home_last.get(feat, 0)
-
-        # --- Per-team features (home_X or visitor_X) ---
-        elif feat.startswith("home_"):
-            # Get from the home team's last game as home
-            if len(home_as_home) > 0:
-                val = home_as_home.iloc[-1].get(feat, 0)
-            elif home_last is not None:
-                # Map: if team was visitor last, use the visitor_ version
-                vis_feat = feat.replace("home_", "visitor_", 1)
-                if home_last.get("visitor_team_id") == home_team and vis_feat in home_last.index:
-                    val = home_last.get(vis_feat, 0)
-                else:
-                    val = home_last.get(feat, 0)
-
-        elif feat.startswith("visitor_"):
-            if len(away_as_away) > 0:
-                val = away_as_away.iloc[-1].get(feat, 0)
-            elif away_last is not None:
-                home_feat = feat.replace("visitor_", "home_", 1)
-                if away_last.get("home_team_id") == away_team and home_feat in away_last.index:
-                    val = away_last.get(home_feat, 0)
-                else:
-                    val = away_last.get(feat, 0)
-
-        # --- Standalone features (spread, expected_total, etc.) ---
-        else:
-            # Try from the home team's last home game
-            if len(home_as_home) > 0:
-                val = home_as_home.iloc[-1].get(feat, 0)
-            elif home_last is not None:
-                val = home_last.get(feat, 0)
-
-        # Clean NaN/inf
-        if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+        val = template.get(feat, 0)
+        if pd.isna(val) or (isinstance(val, float) and np.isinf(val)):
             val = 0.0
+        feat_values[feat] = float(val)
 
-        feat_values[feat] = val
+    # Step 2: Override Elo features
+    elo_diff = elo_ratings.get(home_team, 1500) - elo_ratings.get(away_team, 1500)
+    feat_values["elo_rating_diff"] = elo_diff
+    feat_values["elo_diff_squared"] = elo_diff * abs(elo_diff)
+    if "elo_diff_abs" in feat_values:
+        feat_values["elo_diff_abs"] = abs(elo_diff)
+
+    # Step 3: Override diff features with fresh computation
+    for feat, (home_col, vis_col) in diff_map.items():
+        if feat in feat_values:
+            hv = _get_team_stat(home_team, home_col, df_feat)
+            av = _get_team_stat(away_team, vis_col, df_feat)
+            feat_values[feat] = hv - av
+
+    # Step 4: Override visitor features with away team's actual stats
+    for feat in features:
+        if feat.startswith("visitor_") or feat.startswith("vis_"):
+            feat_values[feat] = _get_team_stat(away_team, feat, df_feat)
+
+    # Clean NaN/inf
+    for feat in features:
+        val = feat_values.get(feat, 0.0)
+        if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+            feat_values[feat] = 0.0
 
     return feat_values
 

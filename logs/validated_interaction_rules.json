@@ -1,0 +1,784 @@
+[
+  {
+    "combo": "ortg+per+rap_def+l10_off+l10_def+fatigue",
+    "signals": [
+      "ortg",
+      "per",
+      "rap_def",
+      "l10_off",
+      "l10_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7989,
+    "min_accuracy": 0.7299,
+    "seasons_above_70pct": 23,
+    "total_seasons": 23,
+    "avg_coverage": 0.1211,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "per": {
+        "column": "team_per_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "l10_off": {
+        "column": "last10_off_rating_diff",
+        "positive_means_home": true
+      },
+      "l10_def": {
+        "column": "last10_def_rating_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "elo+ortg+rap_def+l10_off+l10_def+fatigue",
+    "signals": [
+      "elo",
+      "ortg",
+      "rap_def",
+      "l10_off",
+      "l10_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7949,
+    "min_accuracy": 0.7246,
+    "seasons_above_70pct": 23,
+    "total_seasons": 23,
+    "avg_coverage": 0.1206,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "l10_off": {
+        "column": "last10_off_rating_diff",
+        "positive_means_home": true
+      },
+      "l10_def": {
+        "column": "last10_def_rating_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "elo+ortg+drtg+l10_off+l10_def+fatigue",
+    "signals": [
+      "elo",
+      "ortg",
+      "drtg",
+      "l10_off",
+      "l10_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7942,
+    "min_accuracy": 0.7383,
+    "seasons_above_70pct": 23,
+    "total_seasons": 23,
+    "avg_coverage": 0.1166,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      },
+      "l10_off": {
+        "column": "last10_off_rating_diff",
+        "positive_means_home": true
+      },
+      "l10_def": {
+        "column": "last10_def_rating_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+rap_def+l10_off+l10_def+fatigue",
+    "signals": [
+      "ortg",
+      "rap_def",
+      "l10_off",
+      "l10_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7914,
+    "min_accuracy": 0.7234,
+    "seasons_above_70pct": 23,
+    "total_seasons": 23,
+    "avg_coverage": 0.1243,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "l10_off": {
+        "column": "last10_off_rating_diff",
+        "positive_means_home": true
+      },
+      "l10_def": {
+        "column": "last10_def_rating_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+drtg+l10_off+l10_def+fatigue",
+    "signals": [
+      "ortg",
+      "drtg",
+      "l10_off",
+      "l10_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7901,
+    "min_accuracy": 0.7339,
+    "seasons_above_70pct": 23,
+    "total_seasons": 23,
+    "avg_coverage": 0.1203,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      },
+      "l10_off": {
+        "column": "last10_off_rating_diff",
+        "positive_means_home": true
+      },
+      "l10_def": {
+        "column": "last10_def_rating_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "rap_off+rap_def+l10_off+l10_def+fatigue",
+    "signals": [
+      "rap_off",
+      "rap_def",
+      "l10_off",
+      "l10_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7887,
+    "min_accuracy": 0.7055,
+    "seasons_above_70pct": 23,
+    "total_seasons": 23,
+    "avg_coverage": 0.1265,
+    "signal_definitions": {
+      "rap_off": {
+        "column": "raptor_off_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "l10_off": {
+        "column": "last10_off_rating_diff",
+        "positive_means_home": true
+      },
+      "l10_def": {
+        "column": "last10_def_rating_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "elo+ortg+rap_def+l10_def+fatigue",
+    "signals": [
+      "elo",
+      "ortg",
+      "rap_def",
+      "l10_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.772,
+    "min_accuracy": 0.7163,
+    "seasons_above_70pct": 23,
+    "total_seasons": 23,
+    "avg_coverage": 0.2008,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "l10_def": {
+        "column": "last10_def_rating_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+rap_def+pyth+fatigue",
+    "signals": [
+      "ortg",
+      "rap_def",
+      "pyth",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7691,
+    "min_accuracy": 0.6737,
+    "seasons_above_70pct": 22,
+    "total_seasons": 23,
+    "avg_coverage": 0.2528,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "pyth": {
+        "column": "pyth_win_exp_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+drtg+pyth+fatigue",
+    "signals": [
+      "ortg",
+      "drtg",
+      "pyth",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7681,
+    "min_accuracy": 0.6667,
+    "seasons_above_70pct": 22,
+    "total_seasons": 23,
+    "avg_coverage": 0.2427,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      },
+      "pyth": {
+        "column": "pyth_win_exp_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+rap_def+l10_net+fatigue",
+    "signals": [
+      "ortg",
+      "rap_def",
+      "l10_net",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7678,
+    "min_accuracy": 0.663,
+    "seasons_above_70pct": 22,
+    "total_seasons": 23,
+    "avg_coverage": 0.252,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "l10_net": {
+        "column": "last10_net_rating_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+rap_def+fatigue",
+    "signals": [
+      "ortg",
+      "rap_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7565,
+    "min_accuracy": 0.6891,
+    "seasons_above_70pct": 22,
+    "total_seasons": 23,
+    "avg_coverage": 0.3041,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "rap_off+rap_def+fatigue",
+    "signals": [
+      "rap_off",
+      "rap_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7559,
+    "min_accuracy": 0.6932,
+    "seasons_above_70pct": 22,
+    "total_seasons": 23,
+    "avg_coverage": 0.3132,
+    "signal_definitions": {
+      "rap_off": {
+        "column": "raptor_off_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "elo+ortg+rap_def+fatigue",
+    "signals": [
+      "elo",
+      "ortg",
+      "rap_def",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7626,
+    "min_accuracy": 0.6923,
+    "seasons_above_70pct": 21,
+    "total_seasons": 23,
+    "avg_coverage": 0.279,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "elo+ortg+drtg+fatigue",
+    "signals": [
+      "elo",
+      "ortg",
+      "drtg",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.762,
+    "min_accuracy": 0.6806,
+    "seasons_above_70pct": 21,
+    "total_seasons": 23,
+    "avg_coverage": 0.2664,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+drtg+fatigue",
+    "signals": [
+      "ortg",
+      "drtg",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7548,
+    "min_accuracy": 0.6779,
+    "seasons_above_70pct": 21,
+    "total_seasons": 23,
+    "avg_coverage": 0.2905,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+drtg+pyth",
+    "signals": [
+      "ortg",
+      "drtg",
+      "pyth"
+    ],
+    "mean_accuracy": 0.7369,
+    "min_accuracy": 0.672,
+    "seasons_above_70pct": 21,
+    "total_seasons": 23,
+    "avg_coverage": 0.484,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      },
+      "pyth": {
+        "column": "pyth_win_exp_diff",
+        "positive_means_home": true
+      }
+    }
+  },
+  {
+    "combo": "ortg+drtg+l10_net",
+    "signals": [
+      "ortg",
+      "drtg",
+      "l10_net"
+    ],
+    "mean_accuracy": 0.7361,
+    "min_accuracy": 0.6667,
+    "seasons_above_70pct": 21,
+    "total_seasons": 23,
+    "avg_coverage": 0.4831,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      },
+      "l10_net": {
+        "column": "last10_net_rating_diff",
+        "positive_means_home": true
+      }
+    }
+  },
+  {
+    "combo": "elo+ortg+drtg",
+    "signals": [
+      "elo",
+      "ortg",
+      "drtg"
+    ],
+    "mean_accuracy": 0.7297,
+    "min_accuracy": 0.6721,
+    "seasons_above_70pct": 20,
+    "total_seasons": 23,
+    "avg_coverage": 0.5348,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "elo+rap_off+rap_def",
+    "signals": [
+      "elo",
+      "rap_off",
+      "rap_def"
+    ],
+    "mean_accuracy": 0.7278,
+    "min_accuracy": 0.6759,
+    "seasons_above_70pct": 19,
+    "total_seasons": 23,
+    "avg_coverage": 0.5732,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "rap_off": {
+        "column": "raptor_off_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      }
+    }
+  },
+  {
+    "combo": "ortg+drtg",
+    "signals": [
+      "ortg",
+      "drtg"
+    ],
+    "mean_accuracy": 0.7209,
+    "min_accuracy": 0.6727,
+    "seasons_above_70pct": 18,
+    "total_seasons": 23,
+    "avg_coverage": 0.5836,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "drtg": {
+        "column": "team_drtg_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "rap_off+rap_def",
+    "signals": [
+      "rap_off",
+      "rap_def"
+    ],
+    "mean_accuracy": 0.7195,
+    "min_accuracy": 0.6748,
+    "seasons_above_70pct": 18,
+    "total_seasons": 23,
+    "avg_coverage": 0.6269,
+    "signal_definitions": {
+      "rap_off": {
+        "column": "raptor_off_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      }
+    }
+  },
+  {
+    "combo": "elo+srs+fatigue",
+    "signals": [
+      "elo",
+      "srs",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7204,
+    "min_accuracy": 0.6742,
+    "seasons_above_70pct": 17,
+    "total_seasons": 23,
+    "avg_coverage": 0.4238,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "srs": {
+        "column": "srs_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "ortg+rap_def",
+    "signals": [
+      "ortg",
+      "rap_def"
+    ],
+    "mean_accuracy": 0.7199,
+    "min_accuracy": 0.6642,
+    "seasons_above_70pct": 17,
+    "total_seasons": 23,
+    "avg_coverage": 0.6109,
+    "signal_definitions": {
+      "ortg": {
+        "column": "team_ortg_diff",
+        "positive_means_home": true
+      },
+      "rap_def": {
+        "column": "raptor_def_diff",
+        "positive_means_home": true
+      }
+    }
+  },
+  {
+    "combo": "bpm+fatigue",
+    "signals": [
+      "bpm",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7053,
+    "min_accuracy": 0.658,
+    "seasons_above_70pct": 14,
+    "total_seasons": 23,
+    "avg_coverage": 0.4999,
+    "signal_definitions": {
+      "bpm": {
+        "column": "team_bpm_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "srs+fatigue",
+    "signals": [
+      "srs",
+      "fatigue"
+    ],
+    "mean_accuracy": 0.7051,
+    "min_accuracy": 0.6623,
+    "seasons_above_70pct": 14,
+    "total_seasons": 23,
+    "avg_coverage": 0.5002,
+    "signal_definitions": {
+      "srs": {
+        "column": "srs_diff",
+        "positive_means_home": true
+      },
+      "fatigue": {
+        "column": "fatigue_diff",
+        "positive_means_home": false
+      }
+    }
+  },
+  {
+    "combo": "elo+srs",
+    "signals": [
+      "elo",
+      "srs"
+    ],
+    "mean_accuracy": 0.6851,
+    "min_accuracy": 0.6333,
+    "seasons_above_70pct": 6,
+    "total_seasons": 23,
+    "avg_coverage": 0.8471,
+    "signal_definitions": {
+      "elo": {
+        "column": "elo_rating_diff",
+        "positive_means_home": true
+      },
+      "srs": {
+        "column": "srs_diff",
+        "positive_means_home": true
+      }
+    }
+  }
+]

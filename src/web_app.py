@@ -44,6 +44,7 @@ EXT_META_RAW_FEATURES = [
 from reinforcement_learning import categorize_game, get_team_tier
 
 RL_ADJUSTMENTS_PATH = os.path.join(BASE_DIR, "logs/rl_results/error_patterns.json")
+INTERACTION_RULES_PATH = os.path.join(BASE_DIR, "logs/validated_interaction_rules.json")
 
 def load_rl_adjustments():
     """Load RL-discovered probability adjustments."""
@@ -63,7 +64,7 @@ def load_rl_adjustments():
 def apply_rl_adjustment(ensemble_prob, feat_values):
     """Apply RL corrections to ensemble probability based on game context."""
     if not RL_ADJUSTMENTS:
-        return ensemble_prob, 0.0, [], 0.0, []
+        return ensemble_prob, 0.0, []
 
     # Build a fake row for categorize_game
     row = {
@@ -120,6 +121,74 @@ def apply_rl_adjustment(ensemble_prob, feat_values):
 
 
 # ============================================================
+# Validated Interaction Rules (70%+ accuracy across 23 seasons)
+# ============================================================
+# These signal-combo rules override the ensemble when ALL signals
+# in a combo unanimously agree. Validated walk-forward on 28,501 games.
+
+INTERACTION_RULES = []
+
+def load_interaction_rules():
+    """Load validated interaction rules from the analysis."""
+    if not os.path.exists(INTERACTION_RULES_PATH):
+        return []
+    with open(INTERACTION_RULES_PATH) as f:
+        rules = json.load(f)
+    # Only use rules that are 70%+ in at least 70% of seasons
+    valid = []
+    for r in rules:
+        ratio = r.get("seasons_above_70pct", 0) / max(r.get("total_seasons", 1), 1)
+        if ratio >= 0.70 and r.get("mean_accuracy", 0) >= 0.70:
+            valid.append(r)
+    return valid
+
+
+def _check_signal(feat_values, col, positive_means_home):
+    """Check if a signal favors home (True) or away (False)."""
+    val = feat_values.get(col, 0)
+    if positive_means_home:
+        return val > 0
+    else:
+        return val < 0  # e.g. lower DRtg = better, so negative favors home
+
+
+def apply_interaction_rules(ensemble_prob, feat_values):
+    """Check interaction rules for display purposes only.
+
+    Interaction rules (70%+ accuracy combos) are shown to the user as
+    additional context but do NOT adjust the ensemble probability.
+    Testing across 28,501 games showed adjustments hurt accuracy because
+    the ensemble already incorporates these features.
+    """
+    if not INTERACTION_RULES:
+        return ensemble_prob, 0.0, []
+
+    matched = []
+    for rule in INTERACTION_RULES:
+        sig_defs = rule.get("signal_definitions", {})
+        if not sig_defs:
+            continue
+
+        directions = []
+        for sig_name, sig_info in sig_defs.items():
+            col = sig_info["column"]
+            pos = sig_info["positive_means_home"]
+            favors_home = _check_signal(feat_values, col, pos)
+            directions.append(favors_home)
+
+        if not directions:
+            continue
+
+        if all(directions):
+            matched.append((rule["combo"], "HOME", rule["mean_accuracy"]))
+        elif not any(directions):
+            matched.append((rule["combo"], "AWAY", rule["mean_accuracy"]))
+
+    # No probability adjustment - rules are informational only
+    return ensemble_prob, 0.0, matched
+
+
+# ============================================================
 # Load models and data at startup
 # ============================================================
 print("Loading models...")
@@ -139,6 +208,10 @@ MODELS["lgb"] = lgbm.Booster(model_file=os.path.join(MODEL_DIR, "lightgbm_model.
 print("Loading RL adjustments...")
 RL_ADJUSTMENTS = load_rl_adjustments()
 print(f"  {len(RL_ADJUSTMENTS)} RL correction rules loaded")
+
+print("Loading interaction rules...")
+INTERACTION_RULES = load_interaction_rules()
+print(f"  {len(INTERACTION_RULES)} validated interaction rules loaded")
 
 print("Loading Elo ratings...")
 elo_df = pd.read_csv(os.path.join(DATA_DIR, "processed/final_elo_ratings.csv"))
@@ -351,6 +424,9 @@ def run_prediction(home_team, away_team):
     # Apply RL corrections
     ensemble_prob, rl_adjustment, rl_rules = apply_rl_adjustment(raw_ensemble_prob, feat_values)
 
+    # Apply validated interaction rules (70%+ across 23 seasons)
+    ensemble_prob, interaction_adj, interaction_matched = apply_interaction_rules(ensemble_prob, feat_values)
+
     threshold = MODELS["config"].get("threshold", 0.52)
     winner = home_team if ensemble_prob >= threshold else away_team
     confidence = max(ensemble_prob, 1 - ensemble_prob)
@@ -383,6 +459,8 @@ def run_prediction(home_team, away_team):
         "raw_ensemble_prob": round(raw_ensemble_prob, 4),
         "rl_adjustment": round(float(rl_adjustment), 4),
         "rl_rules_matched": len(rl_rules),
+        "interaction_adjustment": round(float(interaction_adj), 4),
+        "interaction_rules_matched": len(interaction_matched),
         "rl_rules": [{"pattern": r[0], "correction": round(float(r[1]), 4)} for r in rl_rules[:5]],
     }
     # Ensure all values are JSON-serializable native Python types
